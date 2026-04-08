@@ -318,7 +318,7 @@ function maybeNotifyOnExit(session: ProcessSession, status: "completed" | "faile
     !session.backgrounded ||
     !session.notifyOnExit ||
     session.exitNotified ||
-    session.pollWaiting
+    (session.pollWaitingCount ?? 0) > 0
   ) {
     return;
   }
