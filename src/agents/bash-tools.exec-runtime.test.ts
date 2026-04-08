@@ -297,6 +297,7 @@ describe("emitExecSystemEvent", () => {
     expect(enqueueSystemEventMock).toHaveBeenCalledWith("Exec finished", {
       sessionKey: "agent:ops:main",
       contextKey: "exec:run-1",
+      wakeRequested: true,
     });
     expect(requestHeartbeatNowMock).toHaveBeenCalledWith({
       reason: "exec-event",
@@ -313,6 +314,7 @@ describe("emitExecSystemEvent", () => {
     expect(enqueueSystemEventMock).toHaveBeenCalledWith("Exec finished", {
       sessionKey: "global",
       contextKey: "exec:run-global",
+      wakeRequested: true,
     });
     expect(requestHeartbeatNowMock).toHaveBeenCalledWith({
       reason: "exec-event",
