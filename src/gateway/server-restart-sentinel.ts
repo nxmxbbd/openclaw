@@ -146,10 +146,13 @@ export async function scheduleRestartSentinelWake(params: { deps: CliDeps }) {
   if (!sessionKey) {
     const mainSessionKey = resolveMainSessionKeyFromConfig();
     // Use enqueueSystemEvent directly without wakeRequested for no-session cases
-    // to maintain consistent delivery semantics (queue for next user turn)
+    // to maintain consistent delivery semantics (queue for next user turn).
+    // Intentionally omit deliveryContext: without a sessionKey we cannot attribute
+    // the restart to a specific channel, and spreading a stale context here would
+    // pollute heartbeat preflight's turnSourceDeliveryContext on every subsequent
+    // peek, pinning delivery to a potentially outdated route.
     enqueueSystemEvent(message, {
       sessionKey: mainSessionKey,
-      ...(wakeDeliveryContext ? { deliveryContext: wakeDeliveryContext } : {}),
     });
     return;
   }
