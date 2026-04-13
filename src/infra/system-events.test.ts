@@ -390,10 +390,11 @@ describe("removeExecEventsForSession", () => {
   it("removes exec-completion events matching the session id", () => {
     const key = "agent:main:test-remove-exec";
     const sessionId = "oceanic-harbor";
-    enqueueSystemEvent(`Exec completed (${sessionId}, code 0)`, { sessionKey: key });
+    const sessionPrefix = sessionId.slice(0, 8);
+    enqueueSystemEvent(`Exec completed (${sessionPrefix}, code 0)`, { sessionKey: key });
     enqueueSystemEvent("Model switched to sonnet-4.6", { sessionKey: key });
 
-    const removed = removeExecEventsForSession(key, sessionId);
+    const removed = removeExecEventsForSession(key, sessionPrefix);
     expect(removed).toBe(1);
     expect(peekSystemEvents(key)).toEqual(["Model switched to sonnet-4.6"]);
   });
@@ -402,7 +403,7 @@ describe("removeExecEventsForSession", () => {
     const key = "agent:main:test-remove-no-match";
     enqueueSystemEvent("Model switched to sonnet-4.6", { sessionKey: key });
 
-    const removed = removeExecEventsForSession(key, "deadbeef-0000-0000-0000-000000000000");
+    const removed = removeExecEventsForSession(key, "deadbeef");
     expect(removed).toBe(0);
     expect(peekSystemEvents(key)).toEqual(["Model switched to sonnet-4.6"]);
   });
@@ -410,38 +411,44 @@ describe("removeExecEventsForSession", () => {
   it("cleans up queue entry when all events are removed", () => {
     const key = "agent:main:test-remove-cleanup";
     const sessionId = "oceanic-harbor";
-    enqueueSystemEvent(`Exec completed (${sessionId}, code 0)`, { sessionKey: key });
+    const sessionPrefix = sessionId.slice(0, 8);
+    enqueueSystemEvent(`Exec completed (${sessionPrefix}, code 0)`, { sessionKey: key });
 
-    removeExecEventsForSession(key, sessionId);
+    removeExecEventsForSession(key, sessionPrefix);
     expect(hasSystemEvents(key)).toBe(false);
   });
 
   it("handles empty queue gracefully", () => {
-    const removed = removeExecEventsForSession("agent:main:test-empty", "abcdef12-0000");
+    const removed = removeExecEventsForSession("agent:main:test-empty", "abcdef12");
     expect(removed).toBe(0);
   });
 
   it("removes multiple events for the same session", () => {
     const key = "agent:main:test-remove-multi";
     const sessionId = "oceanic-harbor";
-    enqueueSystemEvent(`Exec completed (${sessionId}, code 0) :: output line`, { sessionKey: key });
+    const sessionPrefix = sessionId.slice(0, 8);
+    enqueueSystemEvent(`Exec completed (${sessionPrefix}, code 0) :: output line`, {
+      sessionKey: key,
+    });
     enqueueSystemEvent("Unrelated event", { sessionKey: key });
-    enqueueSystemEvent(`Exec failed (${sessionId}, signal SIGTERM)`, { sessionKey: key });
+    enqueueSystemEvent(`Exec failed (${sessionPrefix}, signal SIGTERM)`, { sessionKey: key });
 
-    const removed = removeExecEventsForSession(key, sessionId);
+    const removed = removeExecEventsForSession(key, sessionPrefix);
     expect(removed).toBe(2);
     expect(peekSystemEvents(key)).toEqual(["Unrelated event"]);
   });
 
-  it("does not affect events from other sessions with shared prefix", () => {
+  it("does not affect events from other sessions with different prefixes", () => {
     const key = "agent:main:test-remove-isolation";
-    const sessionA = "oceanic-harbor";
-    const sessionB = "oceanic-reef";
-    enqueueSystemEvent(`Exec completed (${sessionA}, code 0)`, { sessionKey: key });
-    enqueueSystemEvent(`Exec completed (${sessionB}, code 1)`, { sessionKey: key });
+    const sessionA = "oceanic-harbor-12345";
+    const sessionB = "mountain-valley-67890";
+    const prefixA = sessionA.slice(0, 8); // "oceanic-"
+    const prefixB = sessionB.slice(0, 8); // "mountain"
+    enqueueSystemEvent(`Exec completed (${prefixA}, code 0)`, { sessionKey: key });
+    enqueueSystemEvent(`Exec completed (${prefixB}, code 1)`, { sessionKey: key });
 
-    removeExecEventsForSession(key, sessionA);
-    expect(peekSystemEvents(key)).toEqual([`Exec completed (${sessionB}, code 1)`]);
+    removeExecEventsForSession(key, prefixA);
+    expect(peekSystemEvents(key)).toEqual([`Exec completed (${prefixB}, code 1)`]);
   });
 });
 

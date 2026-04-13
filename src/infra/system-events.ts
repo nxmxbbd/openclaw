@@ -266,18 +266,18 @@ export function resolveSystemEventDeliveryContext(
  * maybeNotifyOnExit raced ahead of the pollWaiting flag and already
  * enqueued an event, this removes the now-redundant notification.
  *
- * Matches on `(${sessionId},` to avoid collisions between sessions
- * that share a common slug prefix (e.g. "oceanic-harbor" vs "oceanic-reef").
+ * Note: sessionPrefix should be the 8-character prefix (session.id.slice(0, 8))
+ * to match the format used by maybeNotifyOnExit in event text generation.
  */
-export function removeExecEventsForSession(sessionKey: string, sessionId: string): number {
+export function removeExecEventsForSession(sessionKey: string, sessionPrefix: string): number {
   const key = requireSessionKey(sessionKey);
   const entry = getSessionQueue(key);
   if (!entry || entry.queue.length === 0) {
     return 0;
   }
-  // Match exec completion events specifically: "Exec [status] (sessionId, exitLabel)"
+  // Match exec completion events specifically: "Exec [status] (sessionPrefix, exitLabel)"
   const execPattern = new RegExp(
-    `^Exec \\w+ \\(${sessionId.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")},`,
+    `^Exec \\w+ \\(${sessionPrefix.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")},`,
   );
   const before = entry.queue.length;
   entry.queue = entry.queue.filter((e) => !execPattern.test(e.text));
