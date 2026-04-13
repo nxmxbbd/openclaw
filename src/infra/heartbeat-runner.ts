@@ -559,7 +559,7 @@ async function resolveHeartbeatPreflight(params: {
     shouldInspectPendingEvents,
   } satisfies Omit<HeartbeatPreflight, "skipReason">;
 
-  if (shouldBypassFileGates) {
+  if (shouldBypassFileGates && !canConsumeWakeEvents) {
     return basePreflight;
   }
 
@@ -569,7 +569,11 @@ async function resolveHeartbeatPreflight(params: {
   try {
     heartbeatFileContent = await fs.readFile(heartbeatFilePath, "utf-8");
     const tasks = parseHeartbeatTasks(heartbeatFileContent);
-    if (isHeartbeatContentEffectivelyEmpty(heartbeatFileContent) && tasks.length === 0) {
+    if (
+      isHeartbeatContentEffectivelyEmpty(heartbeatFileContent) &&
+      tasks.length === 0 &&
+      !canConsumeWakeEvents
+    ) {
       return {
         ...basePreflight,
         skipReason: "empty-heartbeat-file",
@@ -588,12 +592,21 @@ async function resolveHeartbeatPreflight(params: {
       // Missing HEARTBEAT.md is intentional in some setups (for example, when
       // heartbeat instructions live outside the file), so keep the run active.
       // The heartbeat prompt already says "if it exists".
-      return basePreflight;
+      // When consuming wake events, always proceed even without a heartbeat file.
+      return {
+        ...basePreflight,
+        tasks: [],
+        heartbeatFileContent: undefined,
+      };
     }
     // For other read errors, proceed with heartbeat as before.
   }
 
-  return basePreflight;
+  return {
+    ...basePreflight,
+    tasks: [],
+    heartbeatFileContent,
+  };
 }
 
 type HeartbeatPromptResolution = {

@@ -333,7 +333,7 @@ export function createProcessTool(
             // Remove any exec-completion events that raced into the queue
             // before pollWaitingCount was set (fallback for the race window).
             if (scopedSession.sessionKey) {
-              removeExecEventsForSession(scopedSession.sessionKey, scopedSession.id.slice(0, 8));
+              removeExecEventsForSession(scopedSession.sessionKey, scopedSession.id);
             }
           }
           const status = exited

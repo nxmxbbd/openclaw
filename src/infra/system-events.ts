@@ -266,18 +266,20 @@ export function resolveSystemEventDeliveryContext(
  * maybeNotifyOnExit raced ahead of the pollWaiting flag and already
  * enqueued an event, this removes the now-redundant notification.
  *
- * Note: sessionPrefix should be the 8-character prefix (session.id.slice(0, 8))
- * to match the format used by maybeNotifyOnExit in event text generation.
+ * Note: sessionId should be the full session identifier to ensure unambiguous matching.
+ * The function will match against the 8-character prefix used in maybeNotifyOnExit event text.
  */
-export function removeExecEventsForSession(sessionKey: string, sessionPrefix: string): number {
+export function removeExecEventsForSession(sessionKey: string, sessionId: string): number {
   const key = requireSessionKey(sessionKey);
   const entry = getSessionQueue(key);
   if (!entry || entry.queue.length === 0) {
     return 0;
   }
-  // Match exec completion events specifically: "Exec [status] (sessionPrefix, exitLabel)"
-  // Use 8-char slice to match the actual event format from maybeNotifyOnExit
-  const execPrefix = sessionPrefix.slice(0, 8);
+  // Match exec completion events specifically: "Exec [status] (sessionId.slice(0,8), exitLabel)"
+  // Use the first 8 chars of the full session ID to match the actual event format from maybeNotifyOnExit
+  // Note: This approach has a known limitation - sessions with identical 8-char prefixes will have
+  // indistinguishable events, potentially causing incorrect cleanup of the wrong session's notifications
+  const execPrefix = sessionId.slice(0, 8);
   const execPattern = new RegExp(
     `^Exec \\w+ \\(${execPrefix.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")},`,
   );

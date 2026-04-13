@@ -394,7 +394,7 @@ describe("removeExecEventsForSession", () => {
     enqueueSystemEvent(`Exec completed (${sessionPrefix}, code 0)`, { sessionKey: key });
     enqueueSystemEvent("Model switched to sonnet-4.6", { sessionKey: key });
 
-    const removed = removeExecEventsForSession(key, sessionPrefix);
+    const removed = removeExecEventsForSession(key, sessionId);
     expect(removed).toBe(1);
     expect(peekSystemEvents(key)).toEqual(["Model switched to sonnet-4.6"]);
   });
@@ -403,7 +403,7 @@ describe("removeExecEventsForSession", () => {
     const key = "agent:main:test-remove-no-match";
     enqueueSystemEvent("Model switched to sonnet-4.6", { sessionKey: key });
 
-    const removed = removeExecEventsForSession(key, "deadbeef");
+    const removed = removeExecEventsForSession(key, "deadbeef-full-session-id");
     expect(removed).toBe(0);
     expect(peekSystemEvents(key)).toEqual(["Model switched to sonnet-4.6"]);
   });
@@ -414,12 +414,12 @@ describe("removeExecEventsForSession", () => {
     const sessionPrefix = sessionId.slice(0, 8);
     enqueueSystemEvent(`Exec completed (${sessionPrefix}, code 0)`, { sessionKey: key });
 
-    removeExecEventsForSession(key, sessionPrefix);
+    removeExecEventsForSession(key, sessionId);
     expect(hasSystemEvents(key)).toBe(false);
   });
 
   it("handles empty queue gracefully", () => {
-    const removed = removeExecEventsForSession("agent:main:test-empty", "abcdef12");
+    const removed = removeExecEventsForSession("agent:main:test-empty", "abcdef12-full-session-id");
     expect(removed).toBe(0);
   });
 
@@ -433,7 +433,7 @@ describe("removeExecEventsForSession", () => {
     enqueueSystemEvent("Unrelated event", { sessionKey: key });
     enqueueSystemEvent(`Exec failed (${sessionPrefix}, signal SIGTERM)`, { sessionKey: key });
 
-    const removed = removeExecEventsForSession(key, sessionPrefix);
+    const removed = removeExecEventsForSession(key, sessionId);
     expect(removed).toBe(2);
     expect(peekSystemEvents(key)).toEqual(["Unrelated event"]);
   });
@@ -447,7 +447,7 @@ describe("removeExecEventsForSession", () => {
     enqueueSystemEvent(`Exec completed (${prefixA}, code 0)`, { sessionKey: key });
     enqueueSystemEvent(`Exec completed (${prefixB}, code 1)`, { sessionKey: key });
 
-    removeExecEventsForSession(key, prefixA);
+    removeExecEventsForSession(key, sessionA);
     expect(peekSystemEvents(key)).toEqual([`Exec completed (${prefixB}, code 1)`]);
   });
 });
