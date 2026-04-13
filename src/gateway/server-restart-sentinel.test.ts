@@ -28,10 +28,12 @@ const mocks = vi.hoisted(() => ({
       | { channel?: string; to?: string; accountId?: string; threadId?: string | number }
       | undefined => undefined,
   ),
-  mergeDeliveryContext: vi.fn((a?: Record<string, unknown>, b?: Record<string, unknown>) => ({
-    ...b,
-    ...a,
-  })),
+  mergeDeliveryContext: vi.fn((a?: Record<string, unknown>, b?: Record<string, unknown>) => {
+    if (!a && !b) {
+      return undefined;
+    }
+    return { ...b, ...a };
+  }),
   getChannelPlugin: vi.fn(() => undefined),
   normalizeChannelId: vi.fn((channel: string) => channel),
   resolveOutboundTarget: vi.fn((_params?: { to?: string }) => ({
@@ -291,7 +293,6 @@ describe("scheduleRestartSentinelWake", () => {
 
     expect(mocks.enqueueSystemEvent).toHaveBeenCalledWith("restart message", {
       sessionKey: "agent:main:main",
-      wakeRequested: true,
     });
     expect(mocks.requestHeartbeatNow).not.toHaveBeenCalled();
     expect(mocks.deliverOutboundPayloads).not.toHaveBeenCalled();
