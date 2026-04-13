@@ -548,8 +548,7 @@ async function resolveHeartbeatPreflight(params: {
     reasonFlags.isExecEventReason ||
     reasonFlags.isCronEventReason ||
     reasonFlags.isWakeReason ||
-    hasTaggedCronEvents ||
-    canConsumeWakeEvents;
+    hasTaggedCronEvents;
   const basePreflight = {
     ...reasonFlags,
     session,
@@ -559,7 +558,7 @@ async function resolveHeartbeatPreflight(params: {
     shouldInspectPendingEvents,
   } satisfies Omit<HeartbeatPreflight, "skipReason">;
 
-  if (shouldBypassFileGates && !canConsumeWakeEvents) {
+  if (shouldBypassFileGates) {
     return basePreflight;
   }
 
