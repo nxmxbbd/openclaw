@@ -537,33 +537,22 @@ async function resolveHeartbeatPreflight(params: {
   const hasTaggedCronEvents = pendingEventEntries.some((event) =>
     event.contextKey?.startsWith("cron:"),
   );
-  // Wake-triggered runs should only inspect pending events when preflight peeks
-  // the same queue that the run itself will execute/drain.
-  const shouldInspectWakePendingEvents = (() => {
-    if (!reasonFlags.isWakeReason) {
-      return false;
-    }
-    if (params.heartbeat?.isolatedSession !== true) {
-      return true;
-    }
-    const configuredSession = resolveHeartbeatSession(params.cfg, params.agentId, params.heartbeat);
-    const { isolatedSessionKey } = resolveIsolatedHeartbeatSessionKey({
-      sessionKey: session.sessionKey,
-      configuredSessionKey: configuredSession.sessionKey,
-      sessionEntry: session.entry,
-    });
-    return isolatedSessionKey === session.sessionKey;
-  })();
+  const hasWakeRequestedEvents = pendingEventEntries.some((event) => event.wakeRequested);
+  // For isolated heartbeat sessions, exclude wake events from base-session inspection
+  // because isolated sessions run on `:heartbeat` keys and cannot drain base-session events
+  const useIsolatedSession = params.heartbeat?.isolatedSession === true;
+  const canConsumeWakeEvents = !useIsolatedSession && hasWakeRequestedEvents;
   const shouldInspectPendingEvents =
     reasonFlags.isExecEventReason ||
     reasonFlags.isCronEventReason ||
-    shouldInspectWakePendingEvents ||
-    hasTaggedCronEvents;
+    hasTaggedCronEvents ||
+    canConsumeWakeEvents;
   const shouldBypassFileGates =
     reasonFlags.isExecEventReason ||
     reasonFlags.isCronEventReason ||
     reasonFlags.isWakeReason ||
-    hasTaggedCronEvents;
+    hasTaggedCronEvents ||
+    canConsumeWakeEvents;
   const basePreflight = {
     ...reasonFlags,
     session,
@@ -1009,8 +998,35 @@ export async function runHeartbeatOnce(opts: {
       typeof heartbeat?.timeoutSeconds === "number" ? heartbeat.timeoutSeconds : undefined;
     const bootstrapContextMode: "lightweight" | undefined =
       heartbeat?.lightContext === true ? "lightweight" : undefined;
+    // Event-driven heartbeats (exec completion, cron, hook/wake, node
+    // notifications, etc.) must drain system events so the agent can see the
+    // results referenced by their prompt.  Only truly periodic heartbeats
+    // (interval timer, retry) skip the drain to avoid silently consuming
+    // events that won't be persisted to the session transcript.
+    //
+    // We invert the check: instead of enumerating every event-driven reason,
+    // we treat everything as event-driven UNLESS it's a known periodic reason.
+    // This is safer — new event sources get drain by default.
+    //
+    // Safety net: even periodic runs check whether events are queued.  Normally
+    // each event type triggers its own event-driven wake (e.g. exec completions
+    // fire reason "exec:<id>:exit" → reasonKind "other" → drain).  But if a
+    // wake was missed (e.g. heartbeats were temporarily disabled when the event
+    // arrived), the next interval run is the only chance to pick them up.
+    // Without this fallback, those events would stay stuck until a user message
+    // or another event-driven wake happens to drain the queue.
+    const reasonKind = resolveHeartbeatReasonKind(opts.reason);
+    const isPeriodicHeartbeat = reasonKind === "interval" || reasonKind === "retry";
+    // Periodic heartbeats drain tagged cron events normally (hasCronEvents →
+    // isEventDriven) and selectively drain wakeRequested events via the
+    // session-system-events layer.  We intentionally do NOT treat arbitrary
+    // queued events as event-driven — some (model switch, fast-mode toggle)
+    // are enqueued without requestHeartbeatNow and are meant for the next
+    // user turn.
+    const isEventDriven = !isPeriodicHeartbeat || hasCronEvents;
     const replyOpts = {
       isHeartbeat: true,
+      isEventDrivenHeartbeat: isEventDriven,
       ...(heartbeatModelOverride ? { heartbeatModelOverride } : {}),
       suppressToolErrorWarnings,
       // Heartbeat timeout is a per-run override so user turns keep the global default.

@@ -45,6 +45,7 @@ function enqueueRestartSentinelWake(
   enqueueSystemEvent(message, {
     sessionKey,
     ...(deliveryContext ? { deliveryContext } : {}),
+    wakeRequested: true,
   });
   requestHeartbeatNow({ reason: "wake", sessionKey });
 }
@@ -144,7 +145,7 @@ export async function scheduleRestartSentinelWake(params: { deps: CliDeps }) {
 
   if (!sessionKey) {
     const mainSessionKey = resolveMainSessionKeyFromConfig();
-    enqueueSystemEvent(message, { sessionKey: mainSessionKey });
+    enqueueSystemEvent(message, { sessionKey: mainSessionKey, wakeRequested: true });
     return;
   }
 

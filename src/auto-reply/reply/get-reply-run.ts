@@ -251,6 +251,7 @@ export async function runPreparedReply(
   const isGroupChat = sessionCtx.ChatType === "group";
   const wasMentioned = ctx.WasMentioned === true;
   const isHeartbeat = opts?.isHeartbeat === true;
+  const isEventDrivenHeartbeat = opts?.isEventDrivenHeartbeat === true;
   const { typingPolicy, suppressTyping } = resolveRunTypingPolicy({
     requestedPolicy: opts?.typingPolicy,
     suppressTyping: opts?.suppressTyping === true,
@@ -409,6 +410,8 @@ export async function runPreparedReply(
         sessionKey,
         isMainSession,
         isNewSession,
+        isHeartbeat,
+        isEventDrivenHeartbeat,
       });
       if (eventsBlock) {
         drainedSystemEventBlocks.push(eventsBlock);

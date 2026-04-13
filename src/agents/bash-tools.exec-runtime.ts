@@ -277,7 +277,12 @@ export function applyShellPath(env: Record<string, string>, shellPath?: string |
 }
 
 function maybeNotifyOnExit(session: ProcessSession, status: "completed" | "failed") {
-  if (!session.backgrounded || !session.notifyOnExit || session.exitNotified) {
+  if (
+    !session.backgrounded ||
+    !session.notifyOnExit ||
+    session.exitNotified ||
+    (session.pollWaitingCount ?? 0) > 0
+  ) {
     return;
   }
   const sessionKey = session.sessionKey?.trim();
@@ -301,6 +306,7 @@ function maybeNotifyOnExit(session: ProcessSession, status: "completed" | "faile
     sessionKey,
     deliveryContext: session.notifyDeliveryContext,
     trusted: false,
+    wakeRequested: true,
   });
   requestHeartbeatNow(scopedHeartbeatWakeOptions(sessionKey, { reason: "exec-event" }));
 }
@@ -377,6 +383,7 @@ export function emitExecSystemEvent(
     sessionKey,
     contextKey: opts.contextKey,
     deliveryContext: opts.deliveryContext,
+    wakeRequested: true,
   });
   requestHeartbeatNow(scopedHeartbeatWakeOptions(sessionKey, { reason: "exec-event" }));
 }

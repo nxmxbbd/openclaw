@@ -181,6 +181,7 @@ describe("scheduleRestartSentinelWake", () => {
       "restart message",
       expect.objectContaining({
         sessionKey: "agent:main:main",
+        wakeRequested: true,
       }),
     );
     expect(mocks.requestHeartbeatNow).toHaveBeenCalledWith({
@@ -271,6 +272,7 @@ describe("scheduleRestartSentinelWake", () => {
       "restart message",
       expect.objectContaining({
         sessionKey: "agent:main:main",
+        wakeRequested: true,
         deliveryContext: expect.objectContaining({
           threadId: "fresh-thread",
         }),
@@ -289,6 +291,7 @@ describe("scheduleRestartSentinelWake", () => {
 
     expect(mocks.enqueueSystemEvent).toHaveBeenCalledWith("restart message", {
       sessionKey: "agent:main:main",
+      wakeRequested: true,
     });
     expect(mocks.requestHeartbeatNow).not.toHaveBeenCalled();
     expect(mocks.deliverOutboundPayloads).not.toHaveBeenCalled();
