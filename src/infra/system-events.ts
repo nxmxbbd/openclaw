@@ -276,8 +276,10 @@ export function removeExecEventsForSession(sessionKey: string, sessionPrefix: st
     return 0;
   }
   // Match exec completion events specifically: "Exec [status] (sessionPrefix, exitLabel)"
+  // Use 8-char slice to match the actual event format from maybeNotifyOnExit
+  const execPrefix = sessionPrefix.slice(0, 8);
   const execPattern = new RegExp(
-    `^Exec \\w+ \\(${sessionPrefix.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")},`,
+    `^Exec \\w+ \\(${execPrefix.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")},`,
   );
   const before = entry.queue.length;
   entry.queue = entry.queue.filter((e) => !execPattern.test(e.text));
