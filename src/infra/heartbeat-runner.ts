@@ -543,10 +543,7 @@ async function resolveHeartbeatPreflight(params: {
   const useIsolatedSession = params.heartbeat?.isolatedSession === true;
   const canConsumeWakeEvents = !useIsolatedSession && hasWakeRequestedEvents;
   const shouldInspectPendingEvents =
-    reasonFlags.isExecEventReason ||
-    reasonFlags.isCronEventReason ||
-    hasTaggedCronEvents ||
-    canConsumeWakeEvents;
+    reasonFlags.isExecEventReason || reasonFlags.isCronEventReason || hasTaggedCronEvents;
   const shouldBypassFileGates =
     reasonFlags.isExecEventReason ||
     reasonFlags.isCronEventReason ||
