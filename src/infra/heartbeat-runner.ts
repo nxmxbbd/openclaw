@@ -543,7 +543,10 @@ async function resolveHeartbeatPreflight(params: {
   const useIsolatedSession = params.heartbeat?.isolatedSession === true;
   const canConsumeWakeEvents = !useIsolatedSession && hasWakeRequestedEvents;
   const shouldInspectPendingEvents =
-    reasonFlags.isExecEventReason || reasonFlags.isCronEventReason || hasTaggedCronEvents;
+    reasonFlags.isExecEventReason ||
+    reasonFlags.isCronEventReason ||
+    (reasonFlags.isWakeReason && !useIsolatedSession) ||
+    hasTaggedCronEvents;
   const shouldBypassFileGates =
     reasonFlags.isExecEventReason ||
     reasonFlags.isCronEventReason ||
@@ -634,19 +637,33 @@ function resolveHeartbeatRunPrompt(params: {
   workspaceDir: string;
   startedAt: number;
   heartbeatFileContent?: string;
+  useIsolatedSession?: boolean;
+  activeSessionPendingEventEntries?: ReturnType<typeof peekSystemEventEntries>;
 }): HeartbeatPromptResolution {
-  const pendingEventEntries = params.preflight.pendingEventEntries;
-  const pendingEvents = params.preflight.shouldInspectPendingEvents
-    ? pendingEventEntries.map((event) => event.text)
-    : [];
-  const cronEvents = pendingEventEntries
+  // For isolated sessions: use active session events for exec completions,
+  // but still check base session for tagged cron events
+  const baseEventEntries = params.preflight.pendingEventEntries;
+  const activeEventEntries = params.activeSessionPendingEventEntries || [];
+
+  // Exec events: isolated sessions only check their own active session
+  const execPendingEvents = params.useIsolatedSession
+    ? params.preflight.isExecEventReason || params.preflight.isWakeReason
+      ? activeEventEntries.map((event) => event.text)
+      : []
+    : params.preflight.shouldInspectPendingEvents
+      ? baseEventEntries.map((event) => event.text)
+      : [];
+
+  // Cron events: both isolated and non-isolated sessions check base session for tagged cron events
+  const cronEvents = baseEventEntries
     .filter(
       (event) =>
         (params.preflight.isCronEventReason || event.contextKey?.startsWith("cron:")) &&
         isCronSystemEvent(event.text),
     )
     .map((event) => event.text);
-  const hasExecCompletion = pendingEvents.some(isExecCompletionEvent);
+
+  const hasExecCompletion = execPendingEvents.some(isExecCompletionEvent);
   const hasCronEvents = cronEvents.length > 0;
 
   // If tasks are defined, build a batched prompt with due tasks
@@ -811,7 +828,7 @@ export async function runHeartbeatOnce(opts: {
     delivery.channel !== "none" && delivery.to && visibility.showAlerts,
   );
   const workspaceDir = resolveAgentWorkspaceDir(cfg, agentId);
-  const { prompt, hasExecCompletion, hasCronEvents } = resolveHeartbeatRunPrompt({
+  let initialPromptResult = resolveHeartbeatRunPrompt({
     cfg,
     heartbeat,
     preflight,
@@ -819,10 +836,12 @@ export async function runHeartbeatOnce(opts: {
     workspaceDir,
     startedAt,
     heartbeatFileContent: preflight.heartbeatFileContent,
+    useIsolatedSession,
+    activeSessionPendingEventEntries: undefined,
   });
 
   // If no tasks are due, skip heartbeat entirely
-  if (prompt === null) {
+  if (initialPromptResult.prompt === null) {
     // Wake-triggered events should stay queued when the run short-circuits:
     // no reply turn ran, so there is nothing that actually consumed that wake payload.
     const shouldConsumeInspectedEvents =
@@ -894,13 +913,32 @@ export async function runHeartbeatOnce(opts: {
     runSessionKey === sessionKey
       ? preflight.pendingEventEntries
       : peekSystemEventEntries(runSessionKey);
+
+  // Recompute the prompt with active session events for isolated sessions
+  const { prompt, hasExecCompletion, hasCronEvents } = useIsolatedSession
+    ? resolveHeartbeatRunPrompt({
+        cfg,
+        heartbeat,
+        preflight,
+        canRelayToUser,
+        workspaceDir,
+        startedAt,
+        heartbeatFileContent: preflight.heartbeatFileContent,
+        useIsolatedSession,
+        activeSessionPendingEventEntries,
+      })
+    : initialPromptResult;
   const hasUntrustedInspectedEvents =
     preflight.shouldInspectPendingEvents &&
     preflight.pendingEventEntries.some((event) => event.trusted === false);
   const hasUntrustedActiveSessionEvents = activeSessionPendingEventEntries.some(
     (event) => event.trusted === false,
   );
-  const hasUntrustedPendingEvents = hasUntrustedInspectedEvents || hasUntrustedActiveSessionEvents;
+  // For isolated sessions, only consider untrusted events from the active (isolated) session,
+  // not from the base session that was inspected during preflight
+  const hasUntrustedPendingEvents = useIsolatedSession
+    ? hasUntrustedActiveSessionEvents
+    : hasUntrustedInspectedEvents || hasUntrustedActiveSessionEvents;
 
   // Update task last run times AFTER successful heartbeat completion
   const updateTaskTimestamps = async () => {
