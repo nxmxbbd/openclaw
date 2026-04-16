@@ -96,7 +96,7 @@ export type ReplyDispatcher = {
    * Because a fulfilled `Promise` is truthy, existing boolean-style checks
    * (`if (delivered)`) remain correct without changes.
    */
-  sendBlockReply: (payload: ReplyPayload) => boolean | Promise<true>;
+  sendBlockReply: (payload: ReplyPayload) => boolean | Promise<boolean>;
   sendFinalReply: (payload: ReplyPayload) => boolean;
   waitForIdle: () => Promise<void>;
   getQueuedCounts: () => Record<ReplyDispatchKind, number>;
