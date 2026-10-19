@@ -150,6 +150,12 @@ it.each<FallbackCase>([
     undefined,
   ],
   [
+    "user session selection under a payload model",
+    makeConfig(["openai/gpt-5.4"]),
+    { job: makeJob({ model: "google/gemini-2.0-flash" }), sessionModelOverrideSource: "user" },
+    ["openai/gpt-5.4"],
+  ],
+  [
     "user session selection with explicit payload fallbacks",
     makeConfig(["openai/gpt-5.4"]),
     {

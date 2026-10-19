@@ -67,8 +67,8 @@ afterEach(async () => {
 
 describe("stored cron session model selections through the real embedded runner", () => {
   async function runWithFailingPickedModel(params: {
-    storedSelection?: Pick<SessionEntry, "modelOverrideSource">;
-    payloadModel?: string;
+    storedSelection: Pick<SessionEntry, "modelOverrideSource">;
+    payload?: { model?: string; fallbacks?: string[] };
   }) {
     return await withOpenClawTestState({ label: "cron-session-model" }, async (state) => {
       installPrivateUpdateHandoffStore(state.root);
@@ -149,22 +149,20 @@ describe("stored cron session model selections through the real embedded runner"
           kind: "agentTurn",
           message: "Reply.",
           lightContext: true,
-          ...(params.payloadModel ? { model: params.payloadModel } : {}),
+          ...params.payload,
         },
         state: {},
       };
-      if (params.storedSelection) {
-        await replaceSessionEntry(
-          { agentId: "main", sessionKey: "agent:main:cron:session-model" },
-          {
-            sessionId: "pinned-session",
-            updatedAt: Date.now(),
-            providerOverride: "picked",
-            modelOverride: "gpt-4.1",
-            ...params.storedSelection,
-          },
-        );
-      }
+      await replaceSessionEntry(
+        { agentId: "main", sessionKey: "agent:main:cron:session-model" },
+        {
+          sessionId: "pinned-session",
+          updatedAt: Date.now(),
+          providerOverride: "picked",
+          modelOverride: "gpt-4.1",
+          ...params.storedSelection,
+        },
+      );
       const storePath = state.statePath("cron", "jobs.json");
       await saveCronJobsStore(storePath, { version: 1, jobs: [stored] });
       const job = (await loadCronJobsStore(storePath)).jobs[0]!;
@@ -191,12 +189,17 @@ describe("stored cron session model selections through the real embedded runner"
 
       expect(requests).toEqual(["picked/gpt-4.1"]);
       expect(result.status).toBe("error");
+      expect(result.error).toContain("invalid_api_key");
     },
   );
 
-  it("keeps configured fallbacks for the same failing model as a job primary", async () => {
+  it.each([
+    { name: "explicit fallbacks", payload: { fallbacks: ["local/gpt-4.1-mini"] } },
+    { name: "its own model", payload: { model: "picked/gpt-4.1" } },
+  ])("keeps falling back for a pinned session when the job sets $name", async ({ payload }) => {
     const { result, requests } = await runWithFailingPickedModel({
-      payloadModel: "picked/gpt-4.1",
+      storedSelection: { modelOverrideSource: "user" },
+      payload,
     });
 
     expect(requests).toEqual(["picked/gpt-4.1", "local/gpt-4.1-mini"]);
