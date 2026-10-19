@@ -280,14 +280,23 @@ function buildAnthropicForwardCompatModel(
   // Registry compat wins when present (it may carry config overrides); the
   // manifest index covers empty-registry runs such as env-key-only sessions.
   const catalogModel = ctx.modelRegistry.find(provider, trimmedModelId);
-  const compat =
-    catalogModel?.compat ??
-    (provider === PROVIDER_ID ? resolveAnthropicManifestModel(trimmedModelId)?.compat : undefined);
+  const manifestModel =
+    provider === PROVIDER_ID ? resolveAnthropicManifestModel(trimmedModelId) : undefined;
+  const compat = catalogModel?.compat ?? manifestModel?.compat;
   return {
     id: trimmedModelId,
     name: trimmedModelId,
     provider,
     ...(compat ? { compat } : {}),
+    // Empty-registry runs (including any run before live discovery first
+    // succeeds) budget from this row: without the declared choices, a session
+    // that selected a smaller window silently runs on the full one.
+    ...(manifestModel?.contextWindows
+      ? {
+          contextWindows: manifestModel.contextWindows,
+          contextWindowDefault: manifestModel.contextWindowDefault,
+        }
+      : {}),
     api: "anthropic-messages",
     baseUrl: "https://api.anthropic.com",
     reasoning: true,
