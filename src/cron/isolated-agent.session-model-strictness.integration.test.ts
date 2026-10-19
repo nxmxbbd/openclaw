@@ -107,6 +107,7 @@ describe("stored cron session model selections through the real embedded runner"
               "picked/gpt-4.1": routeParams,
               "local/gpt-4.1": routeParams,
               "local/gpt-4.1-mini": routeParams,
+              "local/gpt-4.1-nano": routeParams,
             },
           },
         },
@@ -124,7 +125,11 @@ describe("stored cron session model selections through the real embedded runner"
               api: "openai-responses",
               baseUrl: localUrl,
               agentRuntime: { id: "openclaw" },
-              models: [catalogModel("gpt-4.1"), catalogModel("gpt-4.1-mini")],
+              models: [
+                catalogModel("gpt-4.1"),
+                catalogModel("gpt-4.1-mini"),
+                catalogModel("gpt-4.1-nano"),
+              ],
             },
           },
         },
@@ -194,15 +199,27 @@ describe("stored cron session model selections through the real embedded runner"
   );
 
   it.each([
-    { name: "explicit fallbacks", payload: { fallbacks: ["local/gpt-4.1-mini"] } },
-    { name: "its own model", payload: { model: "picked/gpt-4.1" } },
-  ])("keeps falling back for a pinned session when the job sets $name", async ({ payload }) => {
-    const { result, requests } = await runWithFailingPickedModel({
-      storedSelection: { modelOverrideSource: "user" },
-      payload,
-    });
+    {
+      // Distinct from the configured fallback, so the job's own list is what answers.
+      name: "explicit fallbacks",
+      payload: { fallbacks: ["local/gpt-4.1-nano"] },
+      expected: ["picked/gpt-4.1", "local/gpt-4.1-nano"],
+    },
+    {
+      name: "its own model",
+      payload: { model: "picked/gpt-4.1" },
+      expected: ["picked/gpt-4.1", "local/gpt-4.1-mini"],
+    },
+  ])(
+    "keeps falling back for a pinned session when the job sets $name",
+    async ({ payload, expected }) => {
+      const { result, requests } = await runWithFailingPickedModel({
+        storedSelection: { modelOverrideSource: "user" },
+        payload,
+      });
 
-    expect(requests).toEqual(["picked/gpt-4.1", "local/gpt-4.1-mini"]);
-    expect(result.status, result.error).toBe("ok");
-  });
+      expect(requests).toEqual(expected);
+      expect(result.status, result.error).toBe("ok");
+    },
+  );
 });
