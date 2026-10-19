@@ -15,12 +15,13 @@ const MAX_MEMBER_DISPLAY_NAMES = 4096;
 
 export function createMatrixRoomInfoResolver(client: MatrixClient) {
   const memberDisplayNameCache = new Map<string, string>();
+  const roomNameCache = new Map<string, { value: string | undefined; resolved: boolean }>();
 
   function createRoomStateResolver<T>(
     eventType: string,
     project: (state: Record<string, unknown> | undefined) => T,
+    cache = new Map<string, { value: T; resolved: boolean }>(),
   ) {
-    const cache = new Map<string, { value: T; resolved: boolean }>();
     return async (roomId: string) => {
       const cached = cache.get(roomId);
       if (cached) {
@@ -42,8 +43,10 @@ export function createMatrixRoomInfoResolver(client: MatrixClient) {
     };
   }
 
-  const getRoomName = createRoomStateResolver("m.room.name", (state) =>
-    typeof state?.name === "string" ? state.name : undefined,
+  const getRoomName = createRoomStateResolver(
+    "m.room.name",
+    (state) => (typeof state?.name === "string" ? state.name : undefined),
+    roomNameCache,
   );
   const getRoomAliases = createRoomStateResolver("m.room.canonical_alias", (state) => ({
     canonicalAlias: typeof state?.alias === "string" ? state.alias : undefined,
@@ -88,9 +91,14 @@ export function createMatrixRoomInfoResolver(client: MatrixClient) {
     memberDisplayNameCache.delete(`${roomId}:${userId}`);
   };
 
+  const invalidateRoomName = (roomId: string): void => {
+    roomNameCache.delete(roomId);
+  };
+
   return {
     getRoomInfo,
     getMemberDisplayName,
     invalidateMemberDisplayName,
+    invalidateRoomName,
   };
 }

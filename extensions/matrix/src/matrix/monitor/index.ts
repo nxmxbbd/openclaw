@@ -330,7 +330,7 @@ export async function monitorMatrixProvider(opts: MonitorMatrixOpts = {}): Promi
       isStopping: () => cleanedUp || monitorLifecycleSignal?.aborted === true,
     });
     client.on("sync.state", onSyncState);
-    const { getRoomInfo, getMemberDisplayName, invalidateMemberDisplayName } =
+    const { getRoomInfo, getMemberDisplayName, invalidateMemberDisplayName, invalidateRoomName } =
       createMatrixRoomInfoResolver(client);
     const isExplicitlyConfiguredRoom = async (roomId: string): Promise<boolean> => {
       const roomInfoForConfig = needsRoomAliasesForConfig
@@ -458,6 +458,7 @@ export async function monitorMatrixProvider(opts: MonitorMatrixOpts = {}): Promi
       needsRoomAliasesForConfig,
       getRoomInfo,
       invalidateMemberDisplayName,
+      invalidateRoomName,
       logVerboseMessage,
       warnedEncryptedRooms,
       warnedCryptoMissingRooms,

@@ -135,6 +135,7 @@ function createHarness(params?: {
   const sendMessage = vi.fn(async (_roomId: string, _payload: { body?: string }) => "$notice");
   const invalidateRoom = vi.fn();
   const invalidateMemberDisplayName = vi.fn();
+  const invalidateRoomName = vi.fn();
   const rememberInvite = vi.fn();
   const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
   const formatNativeDependencyHint = vi.fn(() => "install hint");
@@ -202,6 +203,7 @@ function createHarness(params?: {
     needsRoomAliasesForConfig: false,
     getRoomInfo: vi.fn(async () => ({ altAliases: [], nameResolved: true, aliasesResolved: true })),
     invalidateMemberDisplayName,
+    invalidateRoomName,
     logVerboseMessage,
     warnedEncryptedRooms: new Set<string>(),
     warnedCryptoMissingRooms: new Set<string>(),
@@ -230,6 +232,7 @@ function createHarness(params?: {
     sendMessage,
     invalidateRoom,
     invalidateMemberDisplayName,
+    invalidateRoomName,
     rememberInvite,
     roomEventListener: eventListener("room.event"),
     listVerifications,
@@ -347,6 +350,21 @@ describe("registerMatrixMonitorEvents verification routing", () => {
       }
     },
   );
+
+  it("invalidates only the renamed room's cached name on a room name state change", () => {
+    const { invalidateRoom, invalidateMemberDisplayName, invalidateRoomName, roomEventListener } =
+      createHarness();
+    roomEventListener("!room:example.org", {
+      event_id: "$name",
+      type: "m.room.name",
+      content: { name: "Renamed Room" },
+      state_key: "",
+    });
+    expect(invalidateRoomName).toHaveBeenCalledTimes(1);
+    expect(invalidateRoomName).toHaveBeenCalledWith("!room:example.org");
+    expect(invalidateRoom).not.toHaveBeenCalled();
+    expect(invalidateMemberDisplayName).not.toHaveBeenCalled();
+  });
 
   it.each(["@bot:example.org", "@alice:example.org"])(
     "tracks invite provenance from %s",

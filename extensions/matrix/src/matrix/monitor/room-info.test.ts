@@ -196,4 +196,30 @@ describe("createMatrixRoomInfoResolver", () => {
     ).resolves.toBe("Bob");
     expect(client.getRoomStateEvent).toHaveBeenCalledTimes(3);
   });
+
+  it("refreshes only the observed room name after a room name state change", async () => {
+    let roomName = "Original Room";
+    const client = createRoomStateClient(async (roomId, eventType) => {
+      if (eventType === "m.room.name") {
+        return { name: roomId === "!room:example.org" ? roomName : "Other Room" };
+      }
+      return { alias: "#room:example.org" };
+    });
+    const resolver = createMatrixRoomInfoResolver(client);
+
+    await resolver.getRoomInfo("!room:example.org", { includeAliases: true });
+    await resolver.getRoomInfo("!other:example.org");
+
+    roomName = "Renamed Room";
+    resolver.invalidateRoomName("!room:example.org");
+
+    await expect(
+      resolver.getRoomInfo("!room:example.org", { includeAliases: true }),
+    ).resolves.toMatchObject({ name: "Renamed Room", canonicalAlias: "#room:example.org" });
+    await expect(resolver.getRoomInfo("!other:example.org")).resolves.toMatchObject({
+      name: "Other Room",
+    });
+    expect(getRoomStateCallCount(client, "m.room.name")).toBe(3);
+    expect(getRoomStateCallCount(client, "m.room.canonical_alias")).toBe(1);
+  });
 });
