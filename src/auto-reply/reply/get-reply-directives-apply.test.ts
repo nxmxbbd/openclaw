@@ -380,22 +380,27 @@ describe("applyInlineDirectiveOverrides", () => {
     expect(mocks.handleDirective).toHaveBeenCalledOnce();
   });
 
+  const verboseAnswer = { text: "Current verbose level: full.\nOptions: on, full, off." };
+  const reasoningAnswer = { text: "Current reasoning level: stream.\nOptions: on, off, stream." };
   it.each([
-    ["directive-only", "/verbose"],
-    ["mixed", "please reply\n/verbose"],
-  ])("reports the agent entry defaults to a %s query", async (lane, body) => {
-    mocks.handleDirective.mockResolvedValue(undefined);
-    await applyInlineDirectiveOverrides(
+    ["/verbose", { kind: "reply", reply: verboseAnswer, preRunRejection: undefined }],
+    ["please reply\n/verbose", { kind: "continue", directiveAck: verboseAnswer }],
+    ["/reasoning", { kind: "reply", reply: reasoningAnswer, preRunRejection: undefined }],
+    ["please reply\n/reasoning", { kind: "continue", directiveAck: reasoningAnswer }],
+  ])("answers %j with the agent entry default", async (body, expected) => {
+    const { handleDirectiveOnly } = await vi.importActual<
+      typeof import("./directive-handling.impl.js")
+    >("./directive-handling.impl.js");
+    mocks.handleDirective.mockImplementation(handleDirectiveOnly);
+
+    const result = await applyInlineDirectiveOverrides(
       directiveParams(body, {
         agentCfg: { verboseDefault: "on", reasoningDefault: "off" },
         agentEntry: { id: "main", verboseDefault: "full", reasoningDefault: "stream" },
       }),
     );
 
-    expect(mocks.handleDirective).toHaveBeenCalledOnce();
-    const handled = mocks.handleDirective.mock.calls[0]?.[0];
-    expect(Boolean(handled?.persistenceState)).toBe(lane === "mixed");
-    expect(handled).toMatchObject({ currentVerboseLevel: "full", currentReasoningLevel: "stream" });
+    expect(result).toEqual(expect.objectContaining(expected));
   });
 
   it("rejects unexpected native model arguments before model selection", async () => {
