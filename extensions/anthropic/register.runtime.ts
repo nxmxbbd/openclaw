@@ -288,9 +288,9 @@ function buildAnthropicForwardCompatModel(
     name: trimmedModelId,
     provider,
     ...(compat ? { compat } : {}),
-    // Empty-registry runs (including any run before live discovery first
-    // succeeds) budget from this row: without the declared choices, a session
-    // that selected a smaller window silently runs on the full one.
+    // Empty-registry runs (including runs after a failed live discovery with no
+    // earlier success) budget from this row: without the declared choices, a
+    // session that selected a smaller window silently runs on the full one.
     ...(manifestModel?.contextWindows
       ? {
           contextWindows: manifestModel.contextWindows,

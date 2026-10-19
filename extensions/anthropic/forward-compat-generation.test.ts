@@ -107,20 +107,31 @@ describe("unreleased Claude generations", () => {
   });
 
   it("carries manifest context-window choices onto hand-built modern rows", () => {
-    // With an empty registry (env-key-only sessions, or before live discovery
-    // first succeeds) this row is the runtime model. Without the catalog's
-    // choices, a session that selected a smaller window silently budgets
-    // against the full window.
+    // With an empty registry (env-key-only sessions, or after a failed live
+    // discovery with no earlier success) this row is the runtime model. Without
+    // the catalog's choices, a session that selected a smaller window silently
+    // budgets against the full window.
     const models = manifest.modelCatalog.providers.anthropic.models;
     const selectable = models.filter((model) => model.contextWindows);
     expect(selectable.length).toBeGreaterThan(0);
     for (const { id, contextWindows, contextWindowDefault } of selectable) {
       expect(resolveModel(id), id).toMatchObject({ contextWindows, contextWindowDefault });
-      // The Claude CLI route takes its choices from its catalog rows, not this row.
-      expect(resolveModel(id, "claude-cli")?.contextWindows, id).toBeUndefined();
     }
-    for (const { id } of models.filter((model) => !model.contextWindows)) {
-      expect(resolveModel(id)?.contextWindows, id).toBeUndefined();
+    // Claude CLI rows take their choices from their catalog rows, and models that
+    // declare none gain none. Ids this builder declines resolve to no row.
+    const rowsFor = (ids: string[], provider?: string) =>
+      ids.flatMap((id) => resolveModel(id, provider) ?? []);
+    for (const rows of [
+      rowsFor(
+        selectable.map(({ id }) => id),
+        "claude-cli",
+      ),
+      rowsFor(models.filter((model) => !model.contextWindows).map(({ id }) => id)),
+    ]) {
+      expect(rows.length).toBeGreaterThan(0);
+      for (const row of rows) {
+        expect(row.contextWindows, row.id).toBeUndefined();
+      }
     }
   });
 
