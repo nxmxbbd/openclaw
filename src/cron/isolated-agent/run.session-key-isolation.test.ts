@@ -148,6 +148,29 @@ describe("runCronIsolatedAgentTurn isolated session identity", () => {
     expect(h.cleanupBrowserSessionsForLifecycleEndMock).not.toHaveBeenCalled();
   });
 
+  it.each(["embedded", "cli"] as const)(
+    "runs a persistent session turn with its selected context window (%s)",
+    async (runtime) => {
+      const sessionKey = "agent:default:project-notes";
+      const entry = h.makeCronSessionEntry({ sessionId: "notes-session", contextWindow: "200k" });
+      setStoredSession(sessionKey, entry);
+      h.loadSessionEntryMock.mockReturnValue(entry);
+      h.isCliProviderMock.mockReturnValue(runtime === "cli");
+      h.mockRunCronFallbackPassthrough();
+      const runner = runtime === "cli" ? h.runCliAgentMock : h.runEmbeddedAgentMock;
+      runner.mockResolvedValue({ payloads: [{ text: "done" }], meta: { agentMeta: {} } });
+
+      const result = await runJob({ sessionTarget: `session:${sessionKey}` }, { sessionKey });
+
+      expect(result).toMatchObject({ status: "ok", sessionKey });
+      expect(runner).toHaveBeenCalledOnce();
+      expect(runner.mock.calls[0]?.[0]).toMatchObject({
+        sessionId: "notes-session",
+        contextWindow: "200k",
+      });
+    },
+  );
+
   it.each([false, true])(
     "runs CLI cron with isolated identity (external hook=%s)",
     async (external) => {
