@@ -380,6 +380,22 @@ describe("applyInlineDirectiveOverrides", () => {
     expect(mocks.handleDirective).toHaveBeenCalledOnce();
   });
 
+  it.each([
+    ["directive-only", "/verbose"],
+    ["mixed", "please reply\n/verbose"],
+  ])("reports the agent verbose default to a %s query", async (_lane, body) => {
+    mocks.handleDirective.mockResolvedValue(undefined);
+    await applyInlineDirectiveOverrides(
+      directiveParams(body, {
+        agentCfg: { verboseDefault: "on" },
+        agentEntry: { id: "main", verboseDefault: "full" },
+      }),
+    );
+
+    expect(mocks.handleDirective).toHaveBeenCalledOnce();
+    expect(mocks.handleDirective.mock.calls[0]?.[0].currentVerboseLevel).toBe("full");
+  });
+
   it("rejects unexpected native model arguments before model selection", async () => {
     const body = "/model openai/gpt-5.5 extra";
     const directives = parseInlineSessionDirectives(body, {

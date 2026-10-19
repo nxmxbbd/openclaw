@@ -29,6 +29,8 @@ export function registerAgentThinkingTests({
     home: string,
     storePath: string,
     agentOverrides?: Partial<NonNullable<NonNullable<OpenClawConfig["agents"]>["defaults"]>>,
+    telegramOverrides?: Partial<NonNullable<NonNullable<OpenClawConfig["channels"]>["telegram"]>>,
+    agentEntries?: NonNullable<NonNullable<OpenClawConfig["agents"]>["entries"]>,
   ) => OpenClawConfig;
   getLastEmbeddedCall: () => Parameters<typeof runEmbeddedAgent>[0] | undefined;
   runtime: RuntimeEnv;
@@ -175,6 +177,19 @@ export function registerAgentThinkingTests({
         model: model.id,
         thinkLevel: "off",
       });
+    });
+  });
+
+  it("runs with the agent entry's verbose default over the global default", async () => {
+    await withTempHome(async (home) => {
+      const store = path.join(home, "sessions.json");
+      mockConfig(home, store, { verboseDefault: "off" }, undefined, {
+        main: { verboseDefault: "full" },
+      });
+
+      await agentCommand({ message: "ping", to: "+1222" }, runtime);
+
+      expect(getLastEmbeddedCall()?.verboseLevel).toBe("full");
     });
   });
 }
