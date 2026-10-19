@@ -1,3 +1,4 @@
+import { safeParseJsonRecord } from "@openclaw/normalization-core/json-coercion";
 import { parseStrictFiniteNumber } from "@openclaw/normalization-core/number-coercion";
 import { asNullableObjectRecord, isRecord } from "@openclaw/normalization-core/record-coerce";
 import {
@@ -51,11 +52,7 @@ export function validateCronForm(form: CronFormState): CronFieldErrors {
     if (!form.eventName.trim()) {
       errors.eventName = "cron.events.eventNameRequired";
     }
-    try {
-      if (!isRecord(JSON.parse(form.eventArguments))) {
-        errors.eventArguments = "cron.events.eventArgumentsInvalid";
-      }
-    } catch {
+    if (!safeParseJsonRecord(form.eventArguments)) {
       errors.eventArguments = "cron.events.eventArgumentsInvalid";
     }
   } else if (form.scheduleKind === "at") {
@@ -185,10 +182,6 @@ function requireCronConfigRevision(revision: string | null | undefined): string 
     return revision;
   }
   throw new Error("This automation is missing its configuration revision. Refresh and try again.");
-}
-
-function replaceLocalCronJob(state: CronState, updatedJob: CronJob) {
-  state.cronJobs = state.cronJobs.map((job) => (job.id === updatedJob.id ? updatedJob : job));
 }
 
 export function updateCronJobsFilter(
@@ -469,7 +462,9 @@ async function updateCronJobDefinition(
     if (!isCurrent()) {
       return false;
     }
-    replaceLocalCronJob(state, updatedJob);
+    state.cronJobs = state.cronJobs.map((entry) =>
+      entry.id === updatedJob.id ? updatedJob : entry,
+    );
     if (ownsEditor()) {
       if (operation === "toggle") {
         setCronEditState(state, updatedJob, { ...form, enabled: updatedJob.enabled });
