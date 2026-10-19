@@ -1,6 +1,7 @@
 // Anthropic tests cover forward-compat resolution for unreleased Claude ids.
 import { supportsClaudeAdaptiveThinking } from "openclaw/plugin-sdk/provider-model-shared";
 import { describe, expect, it } from "vitest";
+import manifest from "./openclaw.plugin.json" with { type: "json" };
 import { buildAnthropicProvider } from "./register.runtime.js";
 
 function resolveModel(modelId: string, provider = "anthropic") {
@@ -102,6 +103,24 @@ describe("unreleased Claude generations", () => {
       expect(model?.id).toBe(id);
       expect(model?.compat).toBeUndefined();
       expect(model?.cost).toEqual({ input: 0, output: 0, cacheRead: 0, cacheWrite: 0 });
+    }
+  });
+
+  it("carries manifest context-window choices onto hand-built modern rows", () => {
+    // With an empty registry (env-key-only sessions, or before live discovery
+    // first succeeds) this row is the runtime model. Without the catalog's
+    // choices, a session that selected a smaller window silently budgets
+    // against the full window.
+    const models = manifest.modelCatalog.providers.anthropic.models;
+    const selectable = models.filter((model) => model.contextWindows);
+    expect(selectable.length).toBeGreaterThan(0);
+    for (const { id, contextWindows, contextWindowDefault } of selectable) {
+      expect(resolveModel(id), id).toMatchObject({ contextWindows, contextWindowDefault });
+      // The Claude CLI route takes its choices from its catalog rows, not this row.
+      expect(resolveModel(id, "claude-cli")?.contextWindows, id).toBeUndefined();
+    }
+    for (const { id } of models.filter((model) => !model.contextWindows)) {
+      expect(resolveModel(id)?.contextWindows, id).toBeUndefined();
     }
   });
 
