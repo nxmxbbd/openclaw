@@ -618,7 +618,7 @@ export async function buildStatusReplyParts(
         ...(agentFallbacksOverride === undefined ? {} : { fallbacks: agentFallbacksOverride }),
       },
       thinkingDefault: configuredThinkingDefault,
-      verboseDefault: agentDefaults.verboseDefault,
+      verboseDefault: agentConfig?.verboseDefault ?? agentDefaults.verboseDefault,
       reasoningDefault: agentConfig?.reasoningDefault ?? agentDefaults.reasoningDefault,
       elevatedDefault: agentDefaults.elevatedDefault,
     },

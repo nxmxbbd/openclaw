@@ -288,7 +288,7 @@ export async function applyInlineDirectiveOverrides(params: {
       await directiveLevelsLoader.load()
     ).resolveCurrentDirectiveLevels({
       sessionEntry,
-      agentEntry: persistenceState ? undefined : agentEntry,
+      agentEntry,
       agentCfg,
       resolveDefaultThinkingLevel:
         !persistenceState || directives.hasThinkDirective

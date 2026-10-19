@@ -18,6 +18,7 @@ export async function resolveCurrentDirectiveLevels(params: {
   };
   agentEntry?: {
     fastModeDefault?: unknown;
+    verboseDefault?: unknown;
     reasoningDefault?: unknown;
   };
   agentCfg?: {
@@ -44,6 +45,7 @@ export async function resolveCurrentDirectiveLevels(params: {
       normalizeFastMode(params.agentEntry?.fastModeDefault),
     currentVerboseLevel:
       (params.sessionEntry?.verboseLevel as VerboseLevel | undefined) ??
+      (params.agentEntry?.verboseDefault as VerboseLevel | undefined) ??
       (params.agentCfg?.verboseDefault as VerboseLevel | undefined),
     currentReasoningLevel:
       (params.sessionEntry?.reasoningLevel as ReasoningLevel | undefined) ??
