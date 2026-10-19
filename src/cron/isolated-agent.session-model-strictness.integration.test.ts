@@ -45,7 +45,7 @@ function completedResponse(model: string): Response {
   });
 }
 
-function model(id: string) {
+function catalogModel(id: string) {
   return {
     id,
     name: id,
@@ -118,13 +118,13 @@ describe("stored cron session model selections through the real embedded runner"
               api: "openai-responses",
               baseUrl: pickedUrl,
               agentRuntime: { id: "openclaw" },
-              models: [model("gpt-4.1")],
+              models: [catalogModel("gpt-4.1")],
             },
             local: {
               api: "openai-responses",
               baseUrl: localUrl,
               agentRuntime: { id: "openclaw" },
-              models: [model("gpt-4.1"), model("gpt-4.1-mini")],
+              models: [catalogModel("gpt-4.1"), catalogModel("gpt-4.1-mini")],
             },
           },
         },
