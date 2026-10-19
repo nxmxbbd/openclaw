@@ -383,17 +383,20 @@ describe("applyInlineDirectiveOverrides", () => {
   it.each([
     ["directive-only", "/verbose"],
     ["mixed", "please reply\n/verbose"],
-  ])("reports the agent verbose default to a %s query", async (_lane, body) => {
+  ])("reports the agent entry defaults to a %s query", async (_lane, body) => {
     mocks.handleDirective.mockResolvedValue(undefined);
     await applyInlineDirectiveOverrides(
       directiveParams(body, {
-        agentCfg: { verboseDefault: "on" },
-        agentEntry: { id: "main", verboseDefault: "full" },
+        agentCfg: { verboseDefault: "on", reasoningDefault: "off" },
+        agentEntry: { id: "main", verboseDefault: "full", reasoningDefault: "stream" },
       }),
     );
 
     expect(mocks.handleDirective).toHaveBeenCalledOnce();
-    expect(mocks.handleDirective.mock.calls[0]?.[0].currentVerboseLevel).toBe("full");
+    expect(mocks.handleDirective.mock.calls[0]?.[0]).toMatchObject({
+      currentVerboseLevel: "full",
+      currentReasoningLevel: "stream",
+    });
   });
 
   it("rejects unexpected native model arguments before model selection", async () => {
