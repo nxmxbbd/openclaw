@@ -14,8 +14,13 @@ import { runCronIsolatedAgentTurn } from "./isolated-agent/run.js";
 import { loadCronJobsStore, saveCronJobsStore } from "./store.js";
 import type { CronStoredJob } from "./types.js";
 
-const pickedUrl = "http://127.0.0.1:11434/v1";
-const localUrl = "http://127.0.0.1:11435/v1";
+// Loopback stubs named by role: the pinned model always fails with 401 on purpose; the others answer.
+const providerUrls = {
+  pinned: "http://127.0.0.1:11434/v1",
+  primary: "http://127.0.0.1:11435/v1",
+  fallback: "http://127.0.0.1:11436/v1",
+  jobfallback: "http://127.0.0.1:11437/v1",
+} as const;
 
 function completedResponse(model: string): Response {
   const item = {
@@ -45,6 +50,15 @@ function completedResponse(model: string): Response {
   });
 }
 
+function stubProvider(baseUrl: string, model: string) {
+  return {
+    api: "openai-responses" as const,
+    baseUrl,
+    agentRuntime: { id: "openclaw" },
+    models: [catalogModel(model)],
+  };
+}
+
 function catalogModel(id: string) {
   return {
     id,
@@ -66,7 +80,7 @@ afterEach(async () => {
 });
 
 describe("stored cron session model selections through the real embedded runner", () => {
-  async function runWithFailingPickedModel(params: {
+  async function runWithFailingPinnedModel(params: {
     storedSelection: Pick<SessionEntry, "modelOverrideSource">;
     payload?: { model?: string; fallbacks?: string[] };
   }) {
@@ -79,8 +93,11 @@ describe("stored cron session model selections through the real embedded runner"
           throw new Error(`Unexpected external I/O in cron session model fixture: ${request.url}`);
         }
         const body = (await request.json()) as { model?: string };
-        if (request.url.startsWith(pickedUrl)) {
-          requests.push(`picked/${body.model}`);
+        const route = Object.entries(providerUrls).find(([, url]) =>
+          request.url.startsWith(url),
+        )?.[0];
+        requests.push(`${route ?? "unknown"}/${body.model}`);
+        if (route === "pinned") {
           return Response.json(
             {
               error: {
@@ -92,7 +109,6 @@ describe("stored cron session model selections through the real embedded runner"
             { status: 401 },
           );
         }
-        requests.push(`local/${body.model}`);
         return completedResponse(body.model ?? "unknown");
       };
       vi.spyOn(globalThis, "fetch").mockImplementation(providerFetch);
@@ -102,12 +118,12 @@ describe("stored cron session model selections through the real embedded runner"
         agents: {
           entries: { main: { agentDir: state.agentDir(), workspace: state.workspaceDir } },
           defaults: {
-            model: { primary: "local/gpt-4.1", fallbacks: ["local/gpt-4.1-mini"] },
+            model: { primary: "primary/model-a", fallbacks: ["fallback/model-b"] },
             models: {
-              "picked/gpt-4.1": routeParams,
-              "local/gpt-4.1": routeParams,
-              "local/gpt-4.1-mini": routeParams,
-              "local/gpt-4.1-nano": routeParams,
+              "pinned/model-x": routeParams,
+              "primary/model-a": routeParams,
+              "fallback/model-b": routeParams,
+              "jobfallback/model-c": routeParams,
             },
           },
         },
@@ -115,22 +131,10 @@ describe("stored cron session model selections through the real embedded runner"
           mode: "replace",
           providers: {
             // Credentialless loopback routes, so each route's own account check admits it.
-            picked: {
-              api: "openai-responses",
-              baseUrl: pickedUrl,
-              agentRuntime: { id: "openclaw" },
-              models: [catalogModel("gpt-4.1")],
-            },
-            local: {
-              api: "openai-responses",
-              baseUrl: localUrl,
-              agentRuntime: { id: "openclaw" },
-              models: [
-                catalogModel("gpt-4.1"),
-                catalogModel("gpt-4.1-mini"),
-                catalogModel("gpt-4.1-nano"),
-              ],
-            },
+            pinned: stubProvider(providerUrls.pinned, "model-x"),
+            primary: stubProvider(providerUrls.primary, "model-a"),
+            fallback: stubProvider(providerUrls.fallback, "model-b"),
+            jobfallback: stubProvider(providerUrls.jobfallback, "model-c"),
           },
         },
         plugins: { allow: ["openai"], slots: { memory: "none" } },
@@ -163,8 +167,8 @@ describe("stored cron session model selections through the real embedded runner"
         {
           sessionId: "pinned-session",
           updatedAt: Date.now(),
-          providerOverride: "picked",
-          modelOverride: "gpt-4.1",
+          providerOverride: "pinned",
+          modelOverride: "model-x",
           ...params.storedSelection,
         },
       );
@@ -190,9 +194,9 @@ describe("stored cron session model selections through the real embedded runner"
   ])(
     "reports a failed $name session selection instead of answering from a configured fallback",
     async ({ storedSelection }) => {
-      const { result, requests } = await runWithFailingPickedModel({ storedSelection });
+      const { result, requests } = await runWithFailingPinnedModel({ storedSelection });
 
-      expect(requests).toEqual(["picked/gpt-4.1"]);
+      expect(requests).toEqual(["pinned/model-x"]);
       expect(result.status).toBe("error");
       expect(result.error).toContain("invalid_api_key");
     },
@@ -202,18 +206,18 @@ describe("stored cron session model selections through the real embedded runner"
     {
       // Distinct from the configured fallback, so the job's own list is what answers.
       name: "explicit fallbacks",
-      payload: { fallbacks: ["local/gpt-4.1-nano"] },
-      expected: ["picked/gpt-4.1", "local/gpt-4.1-nano"],
+      payload: { fallbacks: ["jobfallback/model-c"] },
+      expected: ["pinned/model-x", "jobfallback/model-c"],
     },
     {
       name: "its own model",
-      payload: { model: "picked/gpt-4.1" },
-      expected: ["picked/gpt-4.1", "local/gpt-4.1-mini"],
+      payload: { model: "pinned/model-x" },
+      expected: ["pinned/model-x", "fallback/model-b"],
     },
   ])(
     "keeps falling back for a pinned session when the job sets $name",
     async ({ payload, expected }) => {
-      const { result, requests } = await runWithFailingPickedModel({
+      const { result, requests } = await runWithFailingPinnedModel({
         storedSelection: { modelOverrideSource: "user" },
         payload,
       });

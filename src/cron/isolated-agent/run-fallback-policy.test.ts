@@ -139,30 +139,30 @@ it.each<FallbackCase>([
   ],
   [
     "user session selection",
-    makeConfig(["openai/gpt-5.4"]),
+    makeConfig(["fallback/model-b"]),
     { sessionModelOverrideSource: "user" },
     [],
   ],
   [
     "automatic session selection",
-    makeConfig(["openai/gpt-5.4"]),
+    makeConfig(["fallback/model-b"]),
     { sessionModelOverrideSource: "auto" },
     undefined,
   ],
   [
     "user session selection under a payload model",
-    makeConfig(["openai/gpt-5.4"]),
-    { job: makeJob({ model: "google/gemini-2.0-flash" }), sessionModelOverrideSource: "user" },
-    ["openai/gpt-5.4"],
+    makeConfig(["fallback/model-b"]),
+    { job: makeJob({ model: "jobmodel/model-d" }), sessionModelOverrideSource: "user" },
+    ["fallback/model-b"],
   ],
   [
     "user session selection with explicit payload fallbacks",
-    makeConfig(["openai/gpt-5.4"]),
+    makeConfig(["fallback/model-b"]),
     {
-      job: makeJob({ fallbacks: ["google/gemini-2.0-flash"] }),
+      job: makeJob({ fallbacks: ["jobfallback/model-c"] }),
       sessionModelOverrideSource: "user",
     },
-    ["google/gemini-2.0-flash"],
+    ["jobfallback/model-c"],
   ],
 ])("resolves %s fallback policy", (_name, cfg, options, expected) => {
   expect(
