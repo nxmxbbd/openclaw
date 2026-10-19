@@ -137,20 +137,44 @@ it.each<FallbackCase>([
     { inheritDefaultFallbacksForAgentStringModel: true },
     ["deepseek/deepseek-v4-flash", "moonshot/kimi-k2.6"],
   ],
+  [
+    "user session selection",
+    makeConfig(["openai/gpt-5.4"]),
+    { sessionModelOverrideSource: "user" },
+    [],
+  ],
+  [
+    "automatic session selection",
+    makeConfig(["openai/gpt-5.4"]),
+    { sessionModelOverrideSource: "auto" },
+    undefined,
+  ],
+  [
+    "user session selection with explicit payload fallbacks",
+    makeConfig(["openai/gpt-5.4"]),
+    {
+      job: makeJob({ fallbacks: ["google/gemini-2.0-flash"] }),
+      sessionModelOverrideSource: "user",
+    },
+    ["google/gemini-2.0-flash"],
+  ],
 ])("resolves %s fallback policy", (_name, cfg, options, expected) => {
   expect(
     resolveCronFallbacksOverride({ cfg, agentId: "main", job: makeJob(), ...options }),
   ).toStrictEqual(expected);
 });
 
-it("keeps cron preflight strict when payload fallbacks are explicitly empty", () => {
+it.each([
+  ["payload fallbacks are explicitly empty", { job: makeJob({ fallbacks: [] }) }],
+  ["a user session selection is pinned", { job: makeJob(), sessionModelOverrideSource: "user" }],
+] as const)("keeps cron preflight strict when %s", (_name, options) => {
   expect(
     resolveCronPreflightCandidates({
       cfg: makeConfig(["openai/gpt-5.4"]),
       agentId: "main",
       provider: "ollama",
       model: "qwen3:32b",
-      job: makeJob({ fallbacks: [] }),
+      ...options,
     }),
   ).toStrictEqual([
     {
