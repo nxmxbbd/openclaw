@@ -12,6 +12,7 @@ import type { MatrixAuth } from "../client.js";
 import type { MatrixClient } from "../sdk.js";
 import type { MatrixVerificationSummary } from "../sdk/verification-manager.js";
 import { registerMatrixMonitorEvents } from "./events.js";
+import { createMatrixRoomInfoResolver } from "./room-info.js";
 import type { MatrixRawEvent } from "./types.js";
 import { EventType } from "./types.js";
 
@@ -108,6 +109,8 @@ function createHarness(params?: {
   joinedMembersByRoom?: Record<string, string[]>;
   getJoinedRoomsError?: Error;
   memberStateByRoomUser?: Record<string, Record<string, { is_direct?: boolean }>>;
+  /** Homeserver m.room.name state; when set, the monitor gets the real room info resolver. */
+  roomNameByRoom?: Map<string, string>;
   verifications?: VerificationFixture[];
   ensureVerificationDmTracked?: () => Promise<VerificationFixture | null>;
   sasNoticeRetryDelayMs?: number;
@@ -135,7 +138,6 @@ function createHarness(params?: {
   const sendMessage = vi.fn(async (_roomId: string, _payload: { body?: string }) => "$notice");
   const invalidateRoom = vi.fn();
   const invalidateMemberDisplayName = vi.fn();
-  const invalidateRoomName = vi.fn();
   const rememberInvite = vi.fn();
   const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
   const formatNativeDependencyHint = vi.fn(() => "install hint");
@@ -175,14 +177,16 @@ function createHarness(params?: {
         (params?.accountDataByType?.[eventType] as Record<string, unknown> | undefined) ??
         undefined,
     ),
-    getRoomStateEvent: vi.fn(
-      async (roomId: string, _eventType: string, stateKey: string) =>
-        params?.memberStateByRoomUser?.[roomId]?.[stateKey] ?? {},
+    getRoomStateEvent: vi.fn(async (roomId: string, eventType: string, stateKey: string) =>
+      eventType === "m.room.name" && params?.roomNameByRoom?.has(roomId)
+        ? { name: params.roomNameByRoom.get(roomId) }
+        : (params?.memberStateByRoomUser?.[roomId]?.[stateKey] ?? {}),
     ),
     ...(params?.cryptoAvailable === false
       ? {}
       : { crypto: { listVerifications, ensureVerificationDmTracked } }),
   } as unknown as MatrixClient;
+  const roomInfo = params?.roomNameByRoom ? createMatrixRoomInfoResolver(client) : undefined;
 
   const dmPolicy = params?.dmPolicy ?? "open";
   const allowFrom = params?.allowFrom ?? (dmPolicy === "open" ? ["*"] : []);
@@ -201,9 +205,11 @@ function createHarness(params?: {
     directTracker: { invalidateRoom, rememberInvite, isDirectMessage: vi.fn(async () => false) },
     groupPolicy: "allowlist",
     needsRoomAliasesForConfig: false,
-    getRoomInfo: vi.fn(async () => ({ altAliases: [], nameResolved: true, aliasesResolved: true })),
+    getRoomInfo:
+      roomInfo?.getRoomInfo ??
+      vi.fn(async () => ({ altAliases: [], nameResolved: true, aliasesResolved: true })),
     invalidateMemberDisplayName,
-    invalidateRoomName,
+    invalidateRoomName: roomInfo?.invalidateRoomName,
     logVerboseMessage,
     warnedEncryptedRooms: new Set<string>(),
     warnedCryptoMissingRooms: new Set<string>(),
@@ -232,7 +238,7 @@ function createHarness(params?: {
     sendMessage,
     invalidateRoom,
     invalidateMemberDisplayName,
-    invalidateRoomName,
+    roomInfo,
     rememberInvite,
     roomEventListener: eventListener("room.event"),
     listVerifications,
@@ -351,19 +357,42 @@ describe("registerMatrixMonitorEvents verification routing", () => {
     },
   );
 
-  it("invalidates only the renamed room's cached name on a room name state change", () => {
-    const { invalidateRoom, invalidateMemberDisplayName, invalidateRoomName, roomEventListener } =
-      createHarness();
-    roomEventListener("!room:example.org", {
-      event_id: "$name",
-      type: "m.room.name",
-      content: { name: "Renamed Room" },
-      state_key: "",
+  it("serves a room's current name after an m.room.name event, including a cleared name", async () => {
+    const roomNameByRoom = new Map([
+      ["!room:example.org", "Room Alpha"],
+      ["!other:example.org", "Room Other"],
+    ]);
+    const { roomInfo, roomEventListener } = createHarness({ roomNameByRoom });
+    const { getRoomInfo } = expectDefined(roomInfo, "room info resolver");
+    const nameEvent = (roomId: string, name: string) =>
+      roomEventListener(roomId, {
+        event_id: `$name-${name}`,
+        type: "m.room.name",
+        state_key: "",
+        content: { name },
+      });
+
+    await expect(getRoomInfo("!room:example.org")).resolves.toMatchObject({ name: "Room Alpha" });
+    await expect(getRoomInfo("!other:example.org")).resolves.toMatchObject({ name: "Room Other" });
+
+    // The homeserver state changes; the cached name is kept until the room's name event arrives.
+    roomNameByRoom.set("!room:example.org", "Room Beta");
+    roomNameByRoom.set("!other:example.org", "Room Other Two");
+    await expect(getRoomInfo("!room:example.org")).resolves.toMatchObject({ name: "Room Alpha" });
+
+    nameEvent("!room:example.org", "Room Beta");
+    await expect(getRoomInfo("!room:example.org")).resolves.toMatchObject({
+      name: "Room Beta",
+      nameResolved: true,
     });
-    expect(invalidateRoomName).toHaveBeenCalledTimes(1);
-    expect(invalidateRoomName).toHaveBeenCalledWith("!room:example.org");
-    expect(invalidateRoom).not.toHaveBeenCalled();
-    expect(invalidateMemberDisplayName).not.toHaveBeenCalled();
+    await expect(getRoomInfo("!other:example.org")).resolves.toMatchObject({ name: "Room Other" });
+
+    roomNameByRoom.set("!room:example.org", "");
+    nameEvent("!room:example.org", "");
+    await expect(getRoomInfo("!room:example.org")).resolves.toMatchObject({
+      name: "",
+      nameResolved: true,
+    });
   });
 
   it.each(["@bot:example.org", "@alice:example.org"])(
