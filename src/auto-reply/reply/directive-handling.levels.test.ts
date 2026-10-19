@@ -55,7 +55,7 @@ describe("resolveCurrentDirectiveLevels", () => {
     {
       name: "session verbose override",
       sessionEntry: { verboseLevel: "off" },
-      agentEntry: { verboseDefault: "full" },
+      agentEntry: { verboseDefault: "full" as const },
       agentCfg: { verboseDefault: "on" },
       expected: { currentVerboseLevel: "off" },
       defaultCalls: 1,
@@ -63,7 +63,7 @@ describe("resolveCurrentDirectiveLevels", () => {
     {
       name: "agent verbose default",
       sessionEntry: {},
-      agentEntry: { verboseDefault: "full" },
+      agentEntry: { verboseDefault: "full" as const },
       agentCfg: { verboseDefault: "on" },
       expected: { currentVerboseLevel: "full" },
       defaultCalls: 1,
