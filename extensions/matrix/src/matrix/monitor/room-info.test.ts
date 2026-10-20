@@ -197,7 +197,7 @@ describe("createMatrixRoomInfoResolver", () => {
     expect(client.getRoomStateEvent).toHaveBeenCalledTimes(3);
   });
 
-  it("refreshes only the observed room name after a room name state change", async () => {
+  it("serves the current name of a renamed room only when asked for it", async () => {
     let roomName = "Original Room";
     const client = createRoomStateClient(async (roomId, eventType) => {
       if (eventType === "m.room.name") {
@@ -214,11 +214,15 @@ describe("createMatrixRoomInfoResolver", () => {
     resolver.invalidateRoomName("!room:example.org");
 
     await expect(
-      resolver.getRoomInfo("!room:example.org", { includeAliases: true }),
+      resolver.getRoomInfo("!room:example.org", { includeAliases: true, currentName: true }),
     ).resolves.toMatchObject({ name: "Renamed Room", canonicalAlias: "#room:example.org" });
-    await expect(resolver.getRoomInfo("!other:example.org")).resolves.toMatchObject({
-      name: "Other Room",
-    });
+    // Without currentName (the lookup DM promotion uses) the first resolved name is kept.
+    await expect(
+      resolver.getRoomInfo("!room:example.org", { includeAliases: true }),
+    ).resolves.toMatchObject({ name: "Original Room", canonicalAlias: "#room:example.org" });
+    await expect(
+      resolver.getRoomInfo("!other:example.org", { currentName: true }),
+    ).resolves.toMatchObject({ name: "Other Room" });
     expect(getRoomStateCallCount(client, "m.room.name")).toBe(3);
     expect(getRoomStateCallCount(client, "m.room.canonical_alias")).toBe(1);
   });

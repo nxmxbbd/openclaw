@@ -15,7 +15,9 @@ const MAX_MEMBER_DISPLAY_NAMES = 4096;
 
 export function createMatrixRoomInfoResolver(client: MatrixClient) {
   const memberDisplayNameCache = new Map<string, string>();
-  const roomNameCache = new Map<string, { value: string | undefined; resolved: boolean }>();
+  // Rooms whose m.room.name changed after the monitor resolved it, and their current names.
+  const renamedRooms = new Map<string, true>();
+  const currentRoomNameCache = new Map<string, { value: string | undefined; resolved: boolean }>();
 
   function createRoomStateResolver<T>(
     eventType: string,
@@ -43,10 +45,15 @@ export function createMatrixRoomInfoResolver(client: MatrixClient) {
     };
   }
 
-  const getRoomName = createRoomStateResolver(
+  const projectRoomName = (state: Record<string, unknown> | undefined) =>
+    typeof state?.name === "string" ? state.name : undefined;
+  // The first name resolved for a room, kept until it is evicted or the monitor restarts.
+  // DM promotion reads this one, so renames do not change which rooms can be promoted.
+  const getRoomName = createRoomStateResolver("m.room.name", projectRoomName);
+  const getCurrentRoomName = createRoomStateResolver(
     "m.room.name",
-    (state) => (typeof state?.name === "string" ? state.name : undefined),
-    roomNameCache,
+    projectRoomName,
+    currentRoomNameCache,
   );
   const getRoomAliases = createRoomStateResolver("m.room.canonical_alias", (state) => ({
     canonicalAlias: typeof state?.alias === "string" ? state.alias : undefined,
@@ -55,11 +62,17 @@ export function createMatrixRoomInfoResolver(client: MatrixClient) {
       : [],
   }));
 
+  /**
+   * `name` is the first name resolved for the room. With `currentName`, a room renamed since
+   * then (an observed m.room.name event) reports its current name instead.
+   */
   const getRoomInfo = async (
     roomId: string,
-    opts: { includeAliases?: boolean } = {},
+    opts: { includeAliases?: boolean; currentName?: boolean } = {},
   ): Promise<MatrixRoomInfo> => {
-    const { value: name, resolved: nameResolved } = await getRoomName(roomId);
+    const firstName = await getRoomName(roomId);
+    const { value: name, resolved: nameResolved } =
+      opts.currentName && renamedRooms.has(roomId) ? await getCurrentRoomName(roomId) : firstName;
     if (!opts.includeAliases) {
       return { name, altAliases: [], nameResolved, aliasesResolved: false };
     }
@@ -92,7 +105,8 @@ export function createMatrixRoomInfoResolver(client: MatrixClient) {
   };
 
   const invalidateRoomName = (roomId: string): void => {
-    roomNameCache.delete(roomId);
+    setBoundedMap(renamedRooms, roomId, true, MAX_ROOM_INFO);
+    currentRoomNameCache.delete(roomId);
   };
 
   return {

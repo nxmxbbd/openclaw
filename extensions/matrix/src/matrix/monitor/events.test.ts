@@ -12,6 +12,7 @@ import type { MatrixAuth } from "../client.js";
 import type { MatrixClient } from "../sdk.js";
 import type { MatrixVerificationSummary } from "../sdk/verification-manager.js";
 import { registerMatrixMonitorEvents } from "./events.js";
+import { shouldPromoteRecentInviteRoom } from "./recent-invite.js";
 import { createMatrixRoomInfoResolver } from "./room-info.js";
 import type { MatrixRawEvent } from "./types.js";
 import { EventType } from "./types.js";
@@ -364,6 +365,7 @@ describe("registerMatrixMonitorEvents verification routing", () => {
     ]);
     const { roomInfo, roomEventListener } = createHarness({ roomNameByRoom });
     const { getRoomInfo } = expectDefined(roomInfo, "room info resolver");
+    const currentInfo = (roomId: string) => getRoomInfo(roomId, { currentName: true });
     const nameEvent = (roomId: string, name: string) =>
       roomEventListener(roomId, {
         event_id: `$name-${name}`,
@@ -372,26 +374,70 @@ describe("registerMatrixMonitorEvents verification routing", () => {
         content: { name },
       });
 
-    await expect(getRoomInfo("!room:example.org")).resolves.toMatchObject({ name: "Room Alpha" });
-    await expect(getRoomInfo("!other:example.org")).resolves.toMatchObject({ name: "Room Other" });
+    await expect(currentInfo("!room:example.org")).resolves.toMatchObject({ name: "Room Alpha" });
+    await expect(currentInfo("!other:example.org")).resolves.toMatchObject({ name: "Room Other" });
 
     // The homeserver state changes; the cached name is kept until the room's name event arrives.
     roomNameByRoom.set("!room:example.org", "Room Beta");
     roomNameByRoom.set("!other:example.org", "Room Other Two");
-    await expect(getRoomInfo("!room:example.org")).resolves.toMatchObject({ name: "Room Alpha" });
+    await expect(currentInfo("!room:example.org")).resolves.toMatchObject({ name: "Room Alpha" });
 
     nameEvent("!room:example.org", "Room Beta");
-    await expect(getRoomInfo("!room:example.org")).resolves.toMatchObject({
+    await expect(currentInfo("!room:example.org")).resolves.toMatchObject({
       name: "Room Beta",
       nameResolved: true,
     });
-    await expect(getRoomInfo("!other:example.org")).resolves.toMatchObject({ name: "Room Other" });
+    await expect(currentInfo("!other:example.org")).resolves.toMatchObject({ name: "Room Other" });
 
     roomNameByRoom.set("!room:example.org", "");
     nameEvent("!room:example.org", "");
-    await expect(getRoomInfo("!room:example.org")).resolves.toMatchObject({
+    await expect(currentInfo("!room:example.org")).resolves.toMatchObject({
       name: "",
       nameResolved: true,
+    });
+  });
+
+  it("keeps DM promotion on the first room name it resolved after a rename", async () => {
+    const roomNameByRoom = new Map([["!named:example.org", "Room Alpha"]]);
+    const { roomInfo, roomEventListener } = createHarness({ roomNameByRoom });
+    const { getRoomInfo } = expectDefined(roomInfo, "room info resolver");
+    // The lookup and check the monitor's direct-room tracker runs before promoting a room.
+    const promotionView = async (roomId: string) => {
+      const info = await getRoomInfo(roomId, { includeAliases: true });
+      return {
+        name: info.name,
+        promotable: shouldPromoteRecentInviteRoom({ roomId, roomInfo: info }),
+      };
+    };
+    const nameEvent = (roomId: string, name: string) =>
+      roomEventListener(roomId, {
+        event_id: `$name-${roomId}-${name}`,
+        type: "m.room.name",
+        state_key: "",
+        content: { name },
+      });
+
+    await expect(promotionView("!named:example.org")).resolves.toEqual({
+      name: "Room Alpha",
+      promotable: false,
+    });
+    await expect(promotionView("!unnamed:example.org")).resolves.toEqual({
+      name: undefined,
+      promotable: true,
+    });
+
+    roomNameByRoom.set("!named:example.org", "");
+    nameEvent("!named:example.org", "");
+    roomNameByRoom.set("!unnamed:example.org", "Room Bravo");
+    nameEvent("!unnamed:example.org", "Room Bravo");
+
+    await expect(promotionView("!named:example.org")).resolves.toEqual({
+      name: "Room Alpha",
+      promotable: false,
+    });
+    await expect(promotionView("!unnamed:example.org")).resolves.toEqual({
+      name: undefined,
+      promotable: true,
     });
   });
 
