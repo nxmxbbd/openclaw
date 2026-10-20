@@ -91,8 +91,11 @@ function CompanionPanel(props: Props) {
       prop:activeRunId={props.activeRunId}
       prop:pullRequests={props.pullRequests}
       prop:companion={props.companion}
+      prop:modelControls={props.companionModelControls}
+      prop:client={props.state.connected ? props.state.client : null}
       prop:connected={props.state.connected}
       prop:sendShortcut={props.state.settings.chatSendShortcut ?? "enter"}
+      prop:inputDeviceId={props.state.settings.realtimeTalkInputDeviceId}
       prop:onSubmit={props.onCompanionSubmit}
       prop:onDraftChange={props.onCompanionDraftChange}
       prop:onAttachmentsChange={props.onCompanionAttachmentsChange}
@@ -115,6 +118,7 @@ function DesktopPanel(props: Props) {
       prop:presented={presented()}
       prop:refreshOnPresentation={props.desktopRefreshOnPresentation}
       prop:requestedSource={props.desktopSource}
+      prop:runtimeConfig={props.desktopRuntimeConfig}
       prop:sessionKey={props.state.sessionKey}
       prop:onFocusTargetChange={props.onDesktopFocusTargetChange}
     />
@@ -339,8 +343,11 @@ declare module "@solidjs/web" {
         "prop:activeRunId"?: SidebarPanelDefinitionParams["activeRunId"];
         "prop:pullRequests"?: SidebarPanelDefinitionParams["pullRequests"];
         "prop:companion"?: SidebarPanelDefinitionParams["companion"];
+        "prop:modelControls"?: SidebarPanelDefinitionParams["companionModelControls"];
+        "prop:client"?: SidebarPanelDefinitionParams["state"]["client"];
         "prop:connected"?: boolean;
         "prop:sendShortcut"?: SidebarPanelDefinitionParams["state"]["settings"]["chatSendShortcut"];
+        "prop:inputDeviceId"?: string;
         "prop:onSubmit"?: SidebarPanelDefinitionParams["onCompanionSubmit"];
         "prop:onDraftChange"?: SidebarPanelDefinitionParams["onCompanionDraftChange"];
         "prop:onAttachmentsChange"?: SidebarPanelDefinitionParams["onCompanionAttachmentsChange"];
