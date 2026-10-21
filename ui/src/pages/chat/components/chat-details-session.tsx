@@ -2,6 +2,7 @@ import { For, Show, createMemo, createSignal, createStore, onSettled } from "sol
 import type { SessionParticipant } from "../../../../../packages/gateway-protocol/src/schema/session-participant.js";
 import { Icon } from "../../../components/solid/icon.tsx";
 import type { MenuHandle } from "../../../components/solid/menu.tsx";
+import { createTextOverflow } from "../../../components/solid/text-overflow.ts";
 import { registerChatSessionEnglish } from "../../../i18n/locales/en-chat-session.ts";
 import { sessionParticipantIdentityKey } from "../../../lib/chat/sender-label.ts";
 import { useOptionalApplication } from "../../../lib/reactive/context.ts";
@@ -12,9 +13,8 @@ import { scopedSessionArtifactKey } from "../../../lib/sessions/session-key.ts";
 import { defineSolidBridge, type SolidBridgeElement } from "../../../lib/solid-bridge.ts";
 import { ProcessesPanelData } from "../processes-panel-data.ts";
 import { ChatAuthorAvatar } from "./chat-author-avatar.ts";
-import { getContextNoticeViewModel } from "./chat-composer-context.tsx";
 import { ChatDetailsBackground } from "./chat-details-background.tsx";
-import { ChatDetailsContextContent, ChatDetailsContextSummary } from "./chat-details-context.tsx";
+import { ChatDetailsDesktopContext } from "./chat-details-context.tsx";
 import { ChatDetailsDesktopBody } from "./chat-details-desktop-body.tsx";
 import { ChatDetailsDesktopSection } from "./chat-details-desktop-section.tsx";
 import { ChatDetailsContext, ChatDetailsEnvironment } from "./chat-details-environment.tsx";
@@ -26,7 +26,7 @@ import type {
   ChatDetailsOutputs,
   ChatDetailsProps,
 } from "./chat-details-types.ts";
-import { ChatOutputsDesktop, getChatOutputsCount, isChatOutputsEmpty } from "./chat-outputs.tsx";
+import { ChatOutputsDesktop, getChatOutputsCount, hasChatDesktopOutputs } from "./chat-outputs.tsx";
 import { hasChatPullRequests } from "./chat-pull-requests.ts";
 import { ChatPullRequests, type ChatPullRequestsProps } from "./chat-pull-requests.tsx";
 import { syncSessionPanelInputs, useSessionPanel } from "./chat-session-panel.tsx";
@@ -195,6 +195,8 @@ export const ChatDetailsSession = defineSolidBridge<Props>(
           const owner = () => session()?.owner?.actor;
           const people = () => session()?.expandedParticipants ?? session()?.participants ?? [];
           const count = () => session()?.participantCount ?? people().length;
+          const partialPeople = () =>
+            session()?.participantCount === undefined || count() > people().length;
           const desktopPeople = createMemo(() => {
             const union = new Map<string, SessionParticipant>();
             const actors = [owner(), session()?.createdActor];
@@ -315,7 +317,9 @@ export const ChatDetailsSession = defineSolidBridge<Props>(
                         {creatorName() && (
                           <div class="chat-details__creator">
                             <span>{t("chat.sessionDetails.createdBy")}</span>
-                            <span title={creatorName()}>{creatorName()}</span>
+                            <span ref={createTextOverflow(creatorName)} title={creatorName()}>
+                              {creatorName()}
+                            </span>
                           </div>
                         )}
                       </div>
@@ -334,7 +338,13 @@ export const ChatDetailsSession = defineSolidBridge<Props>(
                             {owner() && (
                               <div class="chat-details__person">
                                 <span>{t("chat.sessionDetails.owner")}</span>
-                                <span>{owner()?.label || owner()?.id || owner()?.type}</span>
+                                <span
+                                  ref={createTextOverflow(
+                                    () => owner()?.label || owner()?.id || owner()?.type,
+                                  )}
+                                >
+                                  {owner()?.label || owner()?.id || owner()?.type}
+                                </span>
                               </div>
                             )}
                             <For each={people()}>
@@ -348,7 +358,12 @@ export const ChatDetailsSession = defineSolidBridge<Props>(
                                       profileAvatarUrl: person.avatarUrl,
                                     }}
                                   />
-                                  <span title={person.label || person.identity.id}>
+                                  <span
+                                    ref={createTextOverflow(
+                                      () => person.label || person.identity.id,
+                                    )}
+                                    title={person.label || person.identity.id}
+                                  >
                                     {person.label || person.identity.id}
                                   </span>
                                 </div>
@@ -383,6 +398,7 @@ export const ChatDetailsSession = defineSolidBridge<Props>(
                             <Show when={desktopPeople().length > 0}>
                               <ChatDetailsPeopleSummary
                                 people={desktopPeople()}
+                                partial={partialPeople()}
                                 expanded={sectionExpanded("people")}
                               />
                             </Show>
@@ -404,13 +420,21 @@ export const ChatDetailsSession = defineSolidBridge<Props>(
                           <Show when={creatorName() && !session()?.createdActor?.identity}>
                             <div class="chat-details__creator">
                               <span>{t("chat.sessionDetails.createdBy")}</span>
-                              <span title={creatorName()}>{creatorName()}</span>
+                              <span ref={createTextOverflow(creatorName)} title={creatorName()}>
+                                {creatorName()}
+                              </span>
                             </div>
                           </Show>
                           <Show when={owner() && !owner()?.identity}>
                             <div class="chat-details__person">
                               <span>{t("chat.sessionDetails.owner")}</span>
-                              <span>{owner()?.label || owner()?.id || owner()?.type}</span>
+                              <span
+                                ref={createTextOverflow(
+                                  () => owner()?.label || owner()?.id || owner()?.type,
+                                )}
+                              >
+                                {owner()?.label || owner()?.id || owner()?.type}
+                              </span>
                             </div>
                           </Show>
                         </ChatDetailsDesktopSection>
@@ -429,26 +453,12 @@ export const ChatDetailsSession = defineSolidBridge<Props>(
                   when={props.desktop}
                   fallback={<ChatDetailsContext details={props.props!} presented={active()} />}
                 >
-                  <Show when={getContextNoticeViewModel(session())}>
-                    <ChatDetailsDesktopSection
-                      section="context"
-                      title={t("chat.sessionDetails.context")}
-                      expanded={sectionExpanded("context")}
-                      presented={active()}
-                      onExpandedChange={(expanded) => changeSection("context", expanded)}
-                      metadata={
-                        <span class="chat-details-desktop-context-summary">
-                          <ChatDetailsContextSummary details={props.props!} />
-                        </span>
-                      }
-                    >
-                      <ChatDetailsContextContent
-                        desktop
-                        details={props.props!}
-                        presented={active() && sectionExpanded("context")}
-                      />
-                    </ChatDetailsDesktopSection>
-                  </Show>
+                  <ChatDetailsDesktopContext
+                    details={props.props!}
+                    presented={active()}
+                    expanded={sectionExpanded("context")}
+                    onExpandedChange={(expanded) => changeSection("context", expanded)}
+                  />
                 </Show>
                 <Show when={!props.desktop}>
                   <Background details={props.props!} presented={active()} />
@@ -604,7 +614,7 @@ export const ChatDetailsSession = defineSolidBridge<Props>(
                 </Show>
                 <Show when={desktopPresentation() && outputs()}>
                   {(data) => (
-                    <Show when={!isChatOutputsEmpty(data())}>
+                    <Show when={hasChatDesktopOutputs(data())}>
                       <ChatDetailsDesktopSection
                         section="outputs"
                         title={desktopPresentation()!.outputsLabel}
@@ -675,12 +685,7 @@ export function ChatDetailsDesktopComposition(props: ChatDetailsDesktopCompositi
         dismissed={props.dismissed}
         desktop
       />
-      <Show
-        when={
-          props.props?.progressCard ||
-          (props.props?.progressCardInitialLoading && !props.props?.progressCardError)
-        }
-      >
+      <Show when={props.props?.progressCard}>
         <ChatDetailsProgress
           desktop
           props={props.props}
