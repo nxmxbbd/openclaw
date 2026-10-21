@@ -26,6 +26,7 @@ import type { FollowupRun } from "./queue/types.js";
 import type { AdmittedFollowupTurn } from "./reply-agent-turn-preparation.js";
 import { createPreparationRun } from "./reply-agent-turn-preparation.test-support.js";
 import { resolveReplyToolAuthorityContext } from "./reply-tool-authority.js";
+import type { ScheduledSessionAutomation } from "./session-event-contract.js";
 
 const state = vi.hoisted(() => ({
   admitReply: vi.fn(),
@@ -636,6 +637,51 @@ it("keeps the model selected at admission when preferences change during source 
   );
   expect(turn.queued.run.model).toBe("selected-at-admission");
   expect(queued.run.model).toBe("next-turn-model");
+});
+
+it("takes only the scheduled fallback policy selected at admission", async () => {
+  const policy = (sessionModelOverrideSource?: "user") => ({
+    useSubagentFallbacks: false,
+    inheritDefaultFallbacksForAgentStringModel: false,
+    sessionModelOverrideSource,
+  });
+  const scheduled = (job: string, sessionModelOverrideSource?: "user") =>
+    ({
+      job: { id: job } as ScheduledSessionAutomation["job"],
+      admissionSource: "operator-schedule",
+      assertCurrent: () => {},
+      modelFallbackPolicy: policy(sessionModelOverrideSource),
+    }) satisfies ScheduledSessionAutomation;
+  const enqueued = scheduled("enqueued", "user");
+  const atAdmission = scheduled("other");
+  const queued = createRun();
+  queued.run.scheduledAutomation = enqueued;
+  const ordinary = createRun();
+  // Settings writers replace the waiting source's policy; an ordinary run must not gain one.
+  for (const source of [queued, ordinary]) {
+    state.admitReply.mockImplementationOnce(async ({ captureRunSelection }) => {
+      source.run.scheduledAutomation = atAdmission;
+      captureRunSelection();
+      return { status: "owned", operation: createOperation() };
+    });
+  }
+
+  const { run } = (
+    await admitted(
+      prepare(queued, {
+        opts: {
+          onQueuedFollowupAdmitted: async () => {
+            queued.run.scheduledAutomation = scheduled("later", "user");
+          },
+        },
+      }),
+    )
+  ).queued;
+  expect(run.scheduledAutomation?.modelFallbackPolicy).toBe(atAdmission.modelFallbackPolicy);
+  // The occurrence's job and authority keep the bindings the turn was enqueued with.
+  expect(run.scheduledAutomation?.job).toBe(enqueued.job);
+  expect(run.scheduledAutomation?.assertCurrent).toBe(enqueued.assertCurrent);
+  expect((await admitted(prepare(ordinary))).queued.run.scheduledAutomation).toBeUndefined();
 });
 
 it("refreshes send policy and goal context after preflight rotates the generation", async () => {

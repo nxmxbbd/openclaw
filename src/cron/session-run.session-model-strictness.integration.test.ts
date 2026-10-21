@@ -4,7 +4,6 @@ import { installPrivateUpdateHandoffStore } from "../../test/helpers/private-upd
 import { disposeAllSessionMcpRuntimes } from "../agents/agent-bundle-mcp-manager-api.js";
 import { bindSessionMcpRuntimeTestScheduler } from "../agents/agent-bundle-mcp-manager.test-support.js";
 import { resetPreparedModelRuntimeSnapshotsForTest } from "../agents/prepared-model-runtime.test-support.js";
-import { getExistingFollowupQueue } from "../auto-reply/reply/queue/state.js";
 import { setRuntimeConfigSnapshot } from "../config/runtime-snapshot.js";
 import { resolveAgentMainSessionKey } from "../config/sessions/main-session.js";
 import { replaceSessionEntry } from "../config/sessions/session-accessor.js";
@@ -19,18 +18,34 @@ import { loadCronJobsStore, saveCronJobsStore } from "./store.js";
 import type { CronStoredJob } from "./types.js";
 
 const admission = vi.hoisted(() => ({
+  onEnqueued: undefined as ((sessionKey: string) => void) | undefined,
   whileQueuedAdmissionWaits: undefined as ((sessionKey: string) => Promise<void>) | undefined,
 }));
 
-// The real admission owner runs; a test may commit one settings write once a drained source
-// has entered it, before its selection fence.
+// The real queue runs; this only reports when a turn has been queued behind an active one.
+vi.mock("../auto-reply/reply/queue/enqueue.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../auto-reply/reply/queue/enqueue.js")>();
+  return {
+    ...actual,
+    enqueueFollowupRun: (...args: Parameters<typeof actual.enqueueFollowupRun>) => {
+      const enqueued = actual.enqueueFollowupRun(...args);
+      if (enqueued) {
+        admission.onEnqueued?.(args[0]);
+      }
+      return enqueued;
+    },
+  };
+});
+
+// The real admission owner runs; a test may commit one settings write once a source has
+// entered it, before its selection fence.
 vi.mock("../auto-reply/reply/reply-turn-admission.js", async (importOriginal) => {
   const actual =
     await importOriginal<typeof import("../auto-reply/reply/reply-turn-admission.js")>();
   return {
     ...actual,
     admitReplyTurn: async (...args: Parameters<typeof actual.admitReplyTurn>) => {
-      // Only drained queued sources capture their selection at this owner's fence.
+      // Only reply-turn preparation passes the selection fence; dispatch admission does not.
       const write = args[0].captureRunSelection ? admission.whileQueuedAdmissionWaits : undefined;
       if (write) {
         admission.whileQueuedAdmissionWaits = undefined;
@@ -109,6 +124,7 @@ function stubProvider(baseUrl: string, model: string) {
 beforeEach(bindSessionMcpRuntimeTestScheduler);
 
 afterEach(async () => {
+  admission.onEnqueued = undefined;
   admission.whileQueuedAdmissionWaits = undefined;
   await disposeAllSessionMcpRuntimes();
   await resetPreparedModelRuntimeSnapshotsForTest();
@@ -150,7 +166,7 @@ describe("stored session model selections in scheduled session turns", () => {
         )?.[0];
         requests.push(`${route ?? "unknown"}/${body.model}`);
         if (activeTurn && requests.length === 1) {
-          // The first request belongs to the active turn; hold the session until the scheduled one queues.
+          // The first request belongs to the active turn; hold the session until the next one queues.
           activeTurn.started.resolve();
           await activeTurn.release.promise;
         }
@@ -283,17 +299,26 @@ describe("stored session model selections in scheduled session turns", () => {
         });
         retargeted = true;
       };
+      const queued = Promise.withResolvers<void>();
+      admission.onEnqueued = (queuedSessionKey) => {
+        if (queuedSessionKey === sessionKey) {
+          queued.resolve();
+        }
+      };
+      // A turn settling before its signal reports its own outcome instead of hanging the wait.
+      const settledEarly = (turn: string) => (outcome: unknown) => {
+        throw new Error(`${turn} turn settled early: ${JSON.stringify(outcome)}`);
+      };
       const activeResult = runTurn(loadedActiveJob!);
-      await activeTurn.started.promise;
-      const pending = runTurn(job!);
+      let pending: ReturnType<typeof runTurn> | undefined;
       try {
-        // Pending or already claimed by its drain, the scheduled turn sits behind the active one.
-        await vi.waitFor(
-          () => expect(getExistingFollowupQueue(sessionKey)?.items).toHaveLength(1),
-          { timeout: 10_000 },
-        );
+        await Promise.race([activeTurn.started.promise, activeResult.then(settledEarly("active"))]);
+        pending = runTurn(job!);
+        await Promise.race([queued.promise, pending.then(settledEarly("scheduled"))]);
       } finally {
         activeTurn.release.resolve();
+        // Join both turns before the state root is torn down, on failure paths too.
+        await Promise.allSettled([activeResult, pending]);
       }
       expect((await activeResult).status).toBe("ok");
       const result = await pending;
