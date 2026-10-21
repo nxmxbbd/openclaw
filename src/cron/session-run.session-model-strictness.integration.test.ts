@@ -4,16 +4,42 @@ import { installPrivateUpdateHandoffStore } from "../../test/helpers/private-upd
 import { disposeAllSessionMcpRuntimes } from "../agents/agent-bundle-mcp-manager-api.js";
 import { bindSessionMcpRuntimeTestScheduler } from "../agents/agent-bundle-mcp-manager.test-support.js";
 import { resetPreparedModelRuntimeSnapshotsForTest } from "../agents/prepared-model-runtime.test-support.js";
+import { getExistingFollowupQueue } from "../auto-reply/reply/queue/state.js";
 import { setRuntimeConfigSnapshot } from "../config/runtime-snapshot.js";
 import { resolveAgentMainSessionKey } from "../config/sessions/main-session.js";
 import { replaceSessionEntry } from "../config/sessions/session-accessor.js";
 import type { SessionEntry } from "../config/sessions/types.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
+import { refreshSessionPatchQueuedSelection } from "../gateway/server-methods/sessions-patch-model-selection.js";
 import "../llm/ai-transport-host.js";
+import { resetSessionControllerStateForTest } from "../sessions/session-lifecycle-admission.test-support.js";
 import { withOpenClawTestState } from "../test-utils/openclaw-test-state.js";
 import { runCronSessionTurn } from "./session-run.js";
 import { loadCronJobsStore, saveCronJobsStore } from "./store.js";
 import type { CronStoredJob } from "./types.js";
+
+const admission = vi.hoisted(() => ({
+  whileQueuedAdmissionWaits: undefined as ((sessionKey: string) => Promise<void>) | undefined,
+}));
+
+// The real admission owner runs; a test may commit one settings write once a drained source
+// has entered it, before its selection fence.
+vi.mock("../auto-reply/reply/reply-turn-admission.js", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("../auto-reply/reply/reply-turn-admission.js")>();
+  return {
+    ...actual,
+    admitReplyTurn: async (...args: Parameters<typeof actual.admitReplyTurn>) => {
+      // Only drained queued sources capture their selection at this owner's fence.
+      const write = args[0].captureRunSelection ? admission.whileQueuedAdmissionWaits : undefined;
+      if (write) {
+        admission.whileQueuedAdmissionWaits = undefined;
+        await write(args[0].sessionKey);
+      }
+      return await actual.admitReplyTurn(...args);
+    },
+  };
+});
 
 // Match Gateway startup: scheduled session turns settle through the real reply runtime.
 await Promise.all([
@@ -83,8 +109,11 @@ function stubProvider(baseUrl: string, model: string) {
 beforeEach(bindSessionMcpRuntimeTestScheduler);
 
 afterEach(async () => {
+  admission.whileQueuedAdmissionWaits = undefined;
   await disposeAllSessionMcpRuntimes();
   await resetPreparedModelRuntimeSnapshotsForTest();
+  // Each case has its own state root; a prior case's controller would make the key ambiguous.
+  resetSessionControllerStateForTest();
   vi.restoreAllMocks();
 });
 
@@ -93,13 +122,23 @@ describe("stored session model selections in scheduled session turns", () => {
     storedSelection: Pick<SessionEntry, "modelOverrideSource">;
     target?: "main" | "session";
     payload?: { model?: string; fallbacks?: string[] };
-    storedPin?: { provider: string; model: string };
+    storedPin?: { provider: string; model: string } | null;
     defaultPrimary?: string;
     modelAllow?: string[];
+    /**
+     * Queue the scheduled turn behind an active turn, then commit a sessions.patch model change
+     * while the drained turn waits in admission.
+     */
+    retargetWhileAdmitting?: { pin: { provider: string; model: string } | null };
   }) {
     return await withOpenClawTestState({ label: "cron-session-turn-model" }, async (state) => {
       installPrivateUpdateHandoffStore(state.root);
       const requests: string[] = [];
+      const activeTurn = params.retargetWhileAdmitting && {
+        pin: params.retargetWhileAdmitting.pin,
+        started: Promise.withResolvers<void>(),
+        release: Promise.withResolvers<void>(),
+      };
       const providerFetch: typeof fetch = async (input, init) => {
         const request = new Request(input, init);
         if (request.method !== "POST" || !request.url.endsWith("/responses")) {
@@ -110,6 +149,11 @@ describe("stored session model selections in scheduled session turns", () => {
           request.url.startsWith(url),
         )?.[0];
         requests.push(`${route ?? "unknown"}/${body.model}`);
+        if (activeTurn && requests.length === 1) {
+          // The first request belongs to the active turn; hold the session until the scheduled one queues.
+          activeTurn.started.resolve();
+          await activeTurn.release.promise;
+        }
         if (route === "pinned") {
           return Response.json(
             {
@@ -179,30 +223,81 @@ describe("stored session model selections in scheduled session turns", () => {
         payload: { kind: "agentTurn", message: "Reply.", ...params.payload },
         state: {},
       };
+      const conversation = {
+        sessionId: "pinned-conversation",
+        updatedAt: Date.now(),
+        sessionStartedAt: Date.now(),
+      };
       await replaceSessionEntry(
         { agentId: "main", sessionKey },
-        {
-          sessionId: "pinned-conversation",
-          updatedAt: Date.now(),
-          sessionStartedAt: Date.now(),
-          providerOverride: params.storedPin?.provider ?? "pinned",
-          modelOverride: params.storedPin?.model ?? "model-x",
-          ...params.storedSelection,
-        },
+        params.storedPin === null
+          ? conversation
+          : {
+              ...conversation,
+              providerOverride: params.storedPin?.provider ?? "pinned",
+              modelOverride: params.storedPin?.model ?? "model-x",
+              ...params.storedSelection,
+            },
       );
       const storePath = state.statePath("cron", "jobs.json");
-      await saveCronJobsStore(storePath, { version: 1, jobs: [stored] });
-      const job = (await loadCronJobsStore(storePath)).jobs[0]!;
-      const result = await runCronSessionTurn({
-        cfg,
-        agentId: "main",
-        sessionKey,
-        job,
-        text: "Reply.",
-        admissionSource: "operator-schedule",
-        deliveryAttemptFence: null,
-        assertCurrent() {},
+      const activeJob: CronStoredJob = { ...stored, id: "active-turn", name: "Active turn" };
+      await saveCronJobsStore(storePath, {
+        version: 1,
+        jobs: activeTurn ? [stored, activeJob] : [stored],
       });
+      const [job, loadedActiveJob] = (await loadCronJobsStore(storePath)).jobs;
+      const runTurn = (scheduled: CronStoredJob) =>
+        runCronSessionTurn({
+          cfg,
+          agentId: "main",
+          sessionKey,
+          job: scheduled,
+          text: "Reply.",
+          admissionSource: "operator-schedule",
+          deliveryAttemptFence: null,
+          assertCurrent() {},
+        });
+      if (!activeTurn) {
+        return { result: await runTurn(job!), requests };
+      }
+      let retargeted = false;
+      admission.whileQueuedAdmissionWaits = async (admittedSessionKey) => {
+        expect(admittedSessionKey).toBe(sessionKey);
+        // Commit, then refresh waiting work, as sessions.patch does for a model change.
+        const { pin } = activeTurn;
+        const entry: SessionEntry = pin
+          ? {
+              ...conversation,
+              providerOverride: pin.provider,
+              modelOverride: pin.model,
+              modelOverrideSource: "user",
+            }
+          : conversation;
+        await replaceSessionEntry({ agentId: "main", sessionKey }, entry);
+        refreshSessionPatchQueuedSelection({
+          cfg,
+          entry,
+          patch: { key: sessionKey, model: pin ? `${pin.provider}/${pin.model}` : null },
+          sessionKey,
+          agentId: "main",
+        });
+        retargeted = true;
+      };
+      const activeResult = runTurn(loadedActiveJob!);
+      await activeTurn.started.promise;
+      const pending = runTurn(job!);
+      try {
+        // Pending or already claimed by its drain, the scheduled turn sits behind the active one.
+        await vi.waitFor(
+          () => expect(getExistingFollowupQueue(sessionKey)?.items).toHaveLength(1),
+          { timeout: 10_000 },
+        );
+      } finally {
+        activeTurn.release.resolve();
+      }
+      expect((await activeResult).status).toBe("ok");
+      const result = await pending;
+      expect(retargeted).toBe(true);
       return { result, requests };
     });
   }
@@ -266,5 +361,33 @@ describe("stored session model selections in scheduled session turns", () => {
 
     expect(requests).toEqual(expected);
     expect(result.status, result.error).toBe("ok");
+  });
+
+  describe("when the session model changes while a queued turn waits for admission", () => {
+    it("falls back once the user pin is cleared", async () => {
+      // The answering pin is cleared, so the failing default runs with its configured fallback.
+      const { result, requests } = await runWithFailingPinnedModel({
+        storedSelection: { modelOverrideSource: "user" },
+        storedPin: { provider: "primary", model: "model-a" },
+        defaultPrimary: "pinned/model-x",
+        retargetWhileAdmitting: { pin: null },
+      });
+
+      // The active turn answers from the old pin; the queued turn runs the new selection.
+      expect(requests).toEqual(["primary/model-a", "pinned/model-x", "fallback/model-b"]);
+      expect(result.status, result.error).toBe("ok");
+    });
+
+    it("stays strict once the user pins a model", async () => {
+      const { result, requests } = await runWithFailingPinnedModel({
+        storedSelection: {},
+        storedPin: null,
+        retargetWhileAdmitting: { pin: { provider: "pinned", model: "model-x" } },
+      });
+
+      expect(requests).toEqual(["primary/model-a", "pinned/model-x"]);
+      expect(result.status).toBe("error");
+      expect(result.error).toContain("Couldn't sign in to the AI service");
+    });
   });
 });
