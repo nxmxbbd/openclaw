@@ -1,5 +1,6 @@
+import { getObserver } from "@solidjs/signals";
 import type { JSX } from "@solidjs/web";
-import { createMemo, createStore, merge, onCleanup, Show } from "solid-js";
+import { createMemo, merge, onCleanup, Show } from "solid-js";
 import type { ControlUiNavigationItem } from "../../../src/plugin-sdk/control-ui.js";
 import {
   navigationIconForRoute,
@@ -76,10 +77,15 @@ type SidebarMenusState = {
   peopleFilterMenuPosition: MenuPosition | null;
   catalogViewMenuPosition: (MenuPosition & { catalogId: string }) | null;
   filterMenuView: SidebarFilterMenuView;
-  agentMenuPosition: { x: number; top: number } | null;
+  agentMenuPosition: { x: number; top: number; placement?: "right-start" } | null;
   agentMenuMode: "hover" | "click";
   // Anchored by its bottom edge so the footer menu grows upward.
-  identityMenuPosition: { x: number; bottom: number; width: number } | null;
+  identityMenuPosition: {
+    x: number;
+    bottom: number;
+    width: number;
+    placement?: "right-end";
+  } | null;
   menuRenderer: SidebarMenusRenderer | null;
 };
 
@@ -96,7 +102,7 @@ export function createSidebarMenus(deps: {
     menus.dismissTransientMenus();
     loadMenuRenderer();
   });
-  const [state, setState] = createStore<SidebarMenusState>({
+  const state: SidebarMenusState = {
     railPinMenuPosition: null,
     pluginNavigationMenuPosition: null,
     sessionMenu: null,
@@ -110,7 +116,8 @@ export function createSidebarMenus(deps: {
     agentMenuMode: "click",
     identityMenuPosition: null,
     menuRenderer: null,
-  });
+  };
+  const listeners = new Set<() => void>();
   const triggers = new Map<MenuTrigger, HTMLElement | null>();
   const menuHandles = new Map<"catalogView" | "agent", MenuHandle>();
   let focusAgentRoster: (() => void) | undefined;
@@ -134,18 +141,17 @@ export function createSidebarMenus(deps: {
       }
     },
   );
-  onCleanup(() => {
-    disposed = true;
-    menus.disconnect();
-  });
 
   function setField<Key extends keyof SidebarMenusState>(
     key: Key,
     value: SidebarMenusState[Key],
   ): void {
-    setState((draft) => {
-      draft[key] = value;
-    });
+    if (Object.is(state[key], value)) {
+      return;
+    }
+    state[key] = value;
+    listeners.forEach((listener) => listener());
+    void commit();
   }
 
   const loadMenuRenderer = () => void menuRendererImport.load().catch(() => undefined);
@@ -167,7 +173,6 @@ export function createSidebarMenus(deps: {
       "sessionMenuWork",
       session.worktreeId
         ? {
-            loading: Boolean(context && client),
             pullRequestUrl: null,
             worktreePath: null,
           }
@@ -210,7 +215,7 @@ export function createSidebarMenus(deps: {
         host.sessionDataContext?.gateway === context.gateway &&
         context.gateway.snapshot.client === client
       ) {
-        setField("sessionMenuWork", { loading: false, ...work });
+        setField("sessionMenuWork", work);
       }
     });
   }
@@ -230,6 +235,7 @@ export function createSidebarMenus(deps: {
     clearAgentMenuHoverTimers();
     loadMenuRenderer();
     const rect = trigger.getBoundingClientRect();
+    const rail = !trigger.closest(".shell--mobile-nav") ? trigger.closest(".sidebar-rail") : null;
     menus.closeSessionMenu();
     menus.closeSessionGroupMenu();
     menus.closePositionedMenu("sessionSort");
@@ -243,12 +249,15 @@ export function createSidebarMenus(deps: {
         : null;
     host.ensureAgentIdentities(host.activeChipAgent().agents.map((agent) => agent.id));
     setField("agentMenuMode", mode);
-    // The agent card sits at the top of the sidebar, so the menu drops below it
-    // and shares its left edge; anchoring above would cover the card you clicked.
-    setField("agentMenuPosition", {
-      x: Math.max(8, Math.min(rect.left, window.innerWidth - AGENT_MENU_WIDTH_PX - 8)),
-      top: Math.min(rect.bottom + 4, window.innerHeight - 8),
-    });
+    setField(
+      "agentMenuPosition",
+      rail
+        ? { x: rail.getBoundingClientRect().right, top: rect.top, placement: "right-start" }
+        : {
+            x: Math.max(8, Math.min(rect.left, window.innerWidth - AGENT_MENU_WIDTH_PX - 8)),
+            top: Math.min(rect.bottom + 4, window.innerHeight - 8),
+          },
+    );
   }
 
   function scheduleAgentMenuHoverClose() {
@@ -256,7 +265,7 @@ export function createSidebarMenus(deps: {
       return;
     }
     globalThis.clearTimeout(agentMenuHoverCloseTimer ?? undefined);
-    // The menu is top-layer content separated from its trigger by a 4px gap.
+    // The menu is top-layer content separated from its trigger by a gap.
     // A short grace period keeps crossing that gap from collapsing the target.
     agentMenuHoverCloseTimer = globalThis.setTimeout(() => {
       agentMenuHoverCloseTimer = null;
@@ -287,6 +296,15 @@ export function createSidebarMenus(deps: {
 
   const menus = merge(state, {
     catalogMenu,
+    subscribe(listener: () => void) {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+    dispose(): void {
+      disposed = true;
+      menus.disconnect();
+      listeners.clear();
+    },
     get catalogMenuView() {
       return catalogMenuView!;
     },
@@ -617,12 +635,16 @@ export function createSidebarMenus(deps: {
       }
       const rect = trigger.getBoundingClientRect();
       const menuWidth = Math.max(240, rect.width);
+      const rail = !trigger.closest(".shell--mobile-nav") ? trigger.closest(".sidebar-rail") : null;
       openPositionedMenu(
         "identity",
         {
-          x: Math.max(8, Math.min(rect.right - menuWidth, window.innerWidth - menuWidth - 8)),
-          bottom: Math.max(8, window.innerHeight - rect.top + 4),
+          x: rail
+            ? rail.getBoundingClientRect().right
+            : Math.max(8, Math.min(rect.right - menuWidth, window.innerWidth - menuWidth - 8)),
+          bottom: Math.max(8, window.innerHeight - (rail ? rect.bottom : rect.top) + 4),
           width: rect.width,
+          ...(rail ? { placement: "right-end" as const } : {}),
         },
         trigger,
       );
@@ -630,42 +652,71 @@ export function createSidebarMenus(deps: {
 
     render(view: SidebarMenusOwner): JSX.Element {
       const avatars = projectOwner(agentMenuAvatars, (owner) => owner);
+      const projection = projectOwner(menus, (owner) => owner);
+      // Read through without copying identities or filtering same-owner publications.
+      const projected = new Proxy(menus, {
+        get(target, key, receiver) {
+          if (getObserver()) {
+            projection.revision();
+          }
+          return Reflect.get(target, key, receiver);
+        },
+      });
       return [
-        <Show when={state.menuRenderer && state.railPinMenuPosition} keyed>
-          {(menu) => state.menuRenderer!.renderSidebarRailPinMenuForMenus(menus, view, menu)}
-        </Show>,
-        <Show when={state.menuRenderer && state.pluginNavigationMenuPosition} keyed>
+        <Show when={projected.menuRenderer && projected.railPinMenuPosition} keyed>
           {(menu) =>
-            state.menuRenderer!.renderSidebarPluginNavigationMenuForMenus(menus, view, menu)
+            projected.menuRenderer!.renderSidebarRailPinMenuForMenus(projected, view, menu)
           }
         </Show>,
-        <Show when={state.menuRenderer && state.agentMenuPosition} keyed>
+        <Show when={projected.menuRenderer && projected.pluginNavigationMenuPosition} keyed>
+          {(menu) =>
+            projected.menuRenderer!.renderSidebarPluginNavigationMenuForMenus(projected, view, menu)
+          }
+        </Show>,
+        <Show when={projected.menuRenderer && projected.agentMenuPosition} keyed>
           {(menu) =>
             agentMenuAvatars.withActiveRoutes(() =>
-              state.menuRenderer!.renderSidebarAgentMenuForMenus(menus, view, menu, avatars.read),
+              projected.menuRenderer!.renderSidebarAgentMenuForMenus(
+                projected,
+                view,
+                menu,
+                avatars.read,
+              ),
             )
           }
         </Show>,
-        <Show when={state.menuRenderer && state.identityMenuPosition} keyed>
-          {(menu) => state.menuRenderer!.renderSidebarIdentityMenuForMenus(menus, view, menu)}
+        <Show when={projected.menuRenderer && projected.identityMenuPosition} keyed>
+          {(menu) =>
+            projected.menuRenderer!.renderSidebarIdentityMenuForMenus(projected, view, menu)
+          }
         </Show>,
-        <Show when={state.menuRenderer && state.sessionMenu} keyed>
-          {(menu) => state.menuRenderer!.renderSidebarSessionMenuForMenus(menus, view, menu)}
+        <Show when={projected.menuRenderer && projected.sessionMenu} keyed>
+          {(menu) =>
+            projected.menuRenderer!.renderSidebarSessionMenuForMenus(projected, view, menu)
+          }
         </Show>,
-        <Show when={state.menuRenderer} keyed>
-          {(renderer) => <>{menus.catalogMenuView.render(renderer.CatalogSessionMenu)}</>}
+        <Show when={projected.menuRenderer} keyed>
+          {(renderer) => <>{projected.catalogMenuView.render(renderer.CatalogSessionMenu)}</>}
         </Show>,
-        <Show when={state.menuRenderer && state.sessionGroupMenu} keyed>
-          {(menu) => state.menuRenderer!.renderSidebarSessionGroupMenuForMenus(menus, view, menu)}
+        <Show when={projected.menuRenderer && projected.sessionGroupMenu} keyed>
+          {(menu) =>
+            projected.menuRenderer!.renderSidebarSessionGroupMenuForMenus(projected, view, menu)
+          }
         </Show>,
-        <Show when={state.menuRenderer && state.sessionSortMenuPosition} keyed>
-          {(menu) => state.menuRenderer!.renderSidebarSessionSortMenuForMenus(menus, view, menu)}
+        <Show when={projected.menuRenderer && projected.sessionSortMenuPosition} keyed>
+          {(menu) =>
+            projected.menuRenderer!.renderSidebarSessionSortMenuForMenus(projected, view, menu)
+          }
         </Show>,
-        <Show when={state.menuRenderer && state.peopleFilterMenuPosition} keyed>
-          {(menu) => state.menuRenderer!.renderSidebarPeopleFilterMenuForMenus(menus, view, menu)}
+        <Show when={projected.menuRenderer && projected.peopleFilterMenuPosition} keyed>
+          {(menu) =>
+            projected.menuRenderer!.renderSidebarPeopleFilterMenuForMenus(projected, view, menu)
+          }
         </Show>,
-        <Show when={state.menuRenderer && state.catalogViewMenuPosition} keyed>
-          {(menu) => state.menuRenderer!.renderSidebarCatalogViewMenuForMenus(menus, view, menu)}
+        <Show when={projected.menuRenderer && projected.catalogViewMenuPosition} keyed>
+          {(menu) =>
+            projected.menuRenderer!.renderSidebarCatalogViewMenuForMenus(projected, view, menu)
+          }
         </Show>,
       ];
     },
