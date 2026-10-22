@@ -129,8 +129,6 @@ describe("createMatrixRoomInfoResolver", () => {
     const resolver = createMatrixRoomInfoResolver({
       getRoomStateEvent: lookup,
     } as unknown as MatrixClient);
-    const calls = (eventType: string) =>
-      lookup.mock.calls.filter(([, calledType]) => calledType === eventType).length;
 
     await resolver.getRoomInfo("!room:example.org", { includeAliases: true });
     await resolver.getRoomInfo("!other:example.org");
@@ -148,7 +146,22 @@ describe("createMatrixRoomInfoResolver", () => {
     await expect(
       resolver.getRoomInfo("!other:example.org", { currentName: true }),
     ).resolves.toMatchObject({ name: "Other Room" });
-    expect(calls("m.room.name")).toBe(3);
-    expect(calls("m.room.canonical_alias")).toBe(1);
+    expect(lookup.mock.calls.filter(([, type]) => type === "m.room.name")).toHaveLength(3);
+    expect(lookup.mock.calls.filter(([, type]) => type === "m.room.canonical_alias")).toHaveLength(
+      1,
+    );
+
+    roomName = "Recovered Room";
+    resolver.invalidateRoomName(room);
+    lookup.mockRejectedValueOnce(new Error("room name lookup unavailable"));
+    await expect(resolver.getRoomInfo(room, { currentName: true })).resolves.toMatchObject({
+      name: undefined,
+      nameResolved: false,
+    });
+    await expect(resolver.getRoomInfo(room, { currentName: true })).resolves.toMatchObject({
+      name: "Recovered Room",
+      nameResolved: true,
+    });
+    await expect(resolver.getRoomInfo(room)).resolves.toMatchObject({ name: "Original Room" });
   });
 });
