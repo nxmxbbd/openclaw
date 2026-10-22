@@ -37,14 +37,21 @@ same projection contract. Top-level assignments publish automatically; use
 Reads remain synchronous, and disposal retires notifications without changing
 the state or owning its requests. Existing domain owners still use `projectOwner()`.
 
+For a private leaf owner created with its view, `projectCallbackOwner(create, read)`
+from `callback-owner.ts`
+supplies its sole notification callback and returns `{ owner, view }`. The view
+uses the same lazy observation and disposal contract, without requiring a
+subscription API on the leaf. Retained owners that outlive a view still need a
+rebindable subscription; use `projectOwner` for those lifetimes.
+
 ## Adapter families
 
-| Module                   | Owners                                                            |
-| ------------------------ | ----------------------------------------------------------------- |
-| `application.ts`         | Gateway snapshots, config, agent selection, overlays              |
-| `application-native.ts`  | Native device settings                                            |
-| `domain-capabilities.ts` | Agents, agent identity, roster activity, channels, runtime config |
-| `events-browser.ts`      | Lobster visits                                                    |
+| Module                   | Owners                                               |
+| ------------------------ | ---------------------------------------------------- |
+| `application.ts`         | Gateway snapshots, config, agent selection, overlays |
+| `application-native.ts`  | Native device settings                               |
+| `domain-capabilities.ts` | Agents, agent identity, channels, runtime config     |
+| `events-browser.ts`      | Lobster visits                                       |
 
 `projectTheme()` exposes preference and applied-palette projections separately.
 Preferences change immediately; `appliedPalette` advances only after the theme

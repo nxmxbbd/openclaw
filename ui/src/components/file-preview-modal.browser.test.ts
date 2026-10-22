@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { OpenClawModalDialog } from "./modal-dialog.ts";
+import { nextFrame } from "../test-helpers/modal-dialog.ts";
+import type { OpenClawModalDialog } from "./modal-dialog.tsx";
 import "./file-preview-modal-registration.ts";
 
 const browserMode = "__vitest_browser__" in globalThis;
@@ -28,7 +29,12 @@ async function resolveRenderedDialog(modal: OpenClawModalDialog) {
   const dialog = modal.querySelector("dialog");
   expect(dialog?.open).toBe(true);
   // The modal opens at 80% scale; measure the settled dialog, not its first animation frame.
-  await Promise.all(dialog!.getAnimations().map((animation) => animation.finished));
+  const animations = dialog!.getAnimations();
+  for (const animation of animations) {
+    animation.finish();
+  }
+  await Promise.all(animations.map((animation) => animation.finished));
+  await nextFrame();
   return dialog!;
 }
 

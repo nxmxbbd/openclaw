@@ -14,7 +14,8 @@ import { Kbd } from "./solid/kbd.tsx";
 import { PanelLoadingSkeleton } from "./solid/panel-loading-skeleton.tsx";
 import { SanitizedHtml } from "./solid/sanitized-html.tsx";
 import styles from "./file-preview-modal.styles.css?inline";
-import "./modal-dialog.ts";
+import kbdStyles from "./kbd.css?inline";
+import "./modal-dialog.tsx";
 
 registerEnglishCatalog(registerFilePreviewEnglish);
 
@@ -259,7 +260,7 @@ function FilePreviewContent(props: FilePreviewModalProps, host: OpenClawFilePrev
   };
   return (
     <>
-      <style>{styles}</style>
+      <style>{`${styles}\nopenclaw-file-preview-modal { ${kbdStyles} }`}</style>
       <openclaw-modal-dialog
         prop:initialFocus={() =>
           [...targets.keys()]

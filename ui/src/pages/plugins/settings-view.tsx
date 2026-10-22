@@ -46,7 +46,7 @@ import {
   type PluginSettingsEditorProps,
   type PluginSettingsField,
 } from "./settings-editor.tsx";
-import { renderPluginLifecycle } from "./settings-lifecycle.tsx";
+import { PluginLifecycle } from "./settings-lifecycle.tsx";
 import { pluginEntryValue, type PluginSettingsEditorModel } from "./settings-model.ts";
 import type { PluginToolPreview } from "./tool-preview.tsx";
 export type PluginSettingsTab = "installed" | "advanced";
@@ -323,7 +323,7 @@ export function renderPluginSettingsInventory(props: InventoryProps): JSX.Elemen
                 class="btn btn--xs btn--icon oc-action oc-action-icon oc-action-secondary"
                 aria-label={t("common.reload")}
                 disabled={props.configBusy || props.configSchemaLoading}
-                onClick={props.onConfigReload}
+                onClick={() => props.onConfigReload()}
               >
                 <Icon name="refresh" />
               </button>
@@ -361,7 +361,6 @@ export function renderPluginSettingsInventory(props: InventoryProps): JSX.Elemen
         <div
           id="plugin-settings-panel"
           role="tabpanel"
-          tabindex="0"
           aria-labelledby={`plugin-settings-tab-${props.tab}`}
         >
           {body}
@@ -478,20 +477,20 @@ function PluginOverview(props: DetailProps): JSX.Element {
   );
   const catalog = createMemo(() => props.catalog ?? props.inspection?.catalog);
   const components = createMemo(() => props.inspection?.components);
-  const catalogIcon = createMemo(() => {
+  const catalogIcon = () => {
     const url = catalog()?.plugin.catalog.imageUrl;
     return {
       src: url ? props.catalogIconUrls?.[url] : undefined,
       loading: Boolean(url && props.catalogIconLoading?.(url)),
     };
-  });
-  const authorIcon = createMemo(() => {
+  };
+  const authorIcon = () => {
     const url = catalog()?.detail.author?.imageUrl;
     return {
       src: url ? props.catalogIconUrls?.[url] : undefined,
       loading: Boolean(url && props.catalogIconLoading?.(url)),
     };
-  });
+  };
   const skills = createMemo(() =>
     (components()?.skills ?? []).map((name) => ({
       name,
@@ -535,14 +534,14 @@ function PluginOverview(props: DetailProps): JSX.Element {
         titleAction={
           <Show
             when={Boolean(props.installProgress)}
-            fallback={renderPluginLifecycle(
-              {
-                ...props,
-                settingsHref: props.settingsHref ?? "#configuration",
-                onSettings: () => props.onTabChange("configuration"),
-              },
-              plugin(),
-            )}
+            fallback={
+              <PluginLifecycle
+                {...props}
+                settingsHref={props.settingsHref ?? "#configuration"}
+                onSettings={() => props.onTabChange("configuration")}
+                plugin={plugin()}
+              />
+            }
           >
             <PluginInstallAction
               registerInstallAction={props.registerInstallAction}

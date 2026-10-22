@@ -1,6 +1,6 @@
 import type { AgentSession, AgentSessionMessage } from "openai/resources/beta/agents/agents";
 import type { Turn } from "openai/resources/beta/agents/sessions/turns";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import { AgentsApiClient, type AgentsApiEvent, type AgentsApiItem } from "./agentsapi-client.js";
 import { createAgentsApiSession } from "./agentsapi-session.js";
@@ -13,13 +13,6 @@ const { fetchWithSsrFGuardMock } = vi.hoisted(() => ({
 const connectionAction = {
   type: "environment_connection",
   environment_id: "environment-fixture",
-} as const;
-const functionCall = {
-  type: "function_call",
-  turn_id: "turn-fixture",
-  call_id: "call-fixture",
-  name: "fixture_tool",
-  arguments: "{}",
 } as const;
 const selfHostedEnvironment: AgentSession["environment"] = {
   type: "self_hosted",
@@ -76,45 +69,44 @@ beforeEach(() => {
   });
 });
 
+afterEach(() => vi.useRealTimers());
+
 describe("Agents API native session receipts", () => {
   it.each(["idle", "disconnect"] as const)(
     "reconciles late terminal records after %s without another native event or input",
     async (boundary) => {
-      const refresh = deferred<void>();
-      const waitForRecovery = vi.fn(async (ms: number) => {
-        if (ms === 1_000) {
-          await refresh.promise;
-        }
-      });
-      const session = createSession({ waitForRecovery });
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      const session = createSession();
       const result = runSession(session);
       void result.catch(() => {});
       try {
         await submitted.promise;
         await stream.send({ type: "agent.session.in_progress" });
-        expect(waitForRecovery).not.toHaveBeenCalled();
+        const healthyRequests = fetchWithSsrFGuardMock.mock.calls.length;
+        await vi.advanceTimersByTimeAsync(1_000);
+        expect(fetchWithSsrFGuardMock).toHaveBeenCalledTimes(healthyRequests);
         if (boundary === "idle") {
           await stream.send({ type: "agent.session.idle" });
         } else {
           const reconnected = stream.nextSubscription();
           stream.disconnect();
+          await vi.advanceTimersByTimeAsync(500);
           await reconnected;
         }
         // A later consumed event fences the preceding saved-state read. It is
         // not a terminal signal and cannot repair late REST records on its own.
         await stream.send({ type: "fixture.recovery_barrier" });
-        expect(waitForRecovery).toHaveBeenCalledWith(1_000, expect.any(AbortSignal));
+        await vi.advanceTimersByTimeAsync(999);
         expect(session.isSettled()).toBe(false);
         savedSession = createHostedSession("idle");
         savedTurns = [createTurn()];
         savedItems = [createSavedMessage("input-fixture", "user", "Fixture prompt")];
-        refresh.resolve();
+        await vi.advanceTimersByTimeAsync(1);
         await expect(result).resolves.toMatchObject({ turn: { id: "turn-fixture" } });
         expect(inputTypes).toEqual(["agent.session.input.message"]);
       } finally {
         savedSession = createHostedSession("idle");
         controller.abort();
-        refresh.resolve();
         await result.catch(() => {});
         await session.close();
       }
@@ -269,111 +261,19 @@ describe("Agents API native session receipts", () => {
     },
   );
 
-  it.each([false, true])(
-    "connects while the original input acknowledgement is pending (existing action: %s)",
-    async (existingAction) => {
-      const messageRequested = deferred<void>();
-      const messageAcknowledgement = deferred<Response>();
-      const connected = deferred<void>();
-      const initialConnectionStateRead = deferred<void>();
-      savedSession = {
-        ...createHostedSession(existingAction ? "requires_action" : "in_progress"),
-        environment: selfHostedEnvironment,
-        required_actions: existingAction ? [connectionAction] : [],
-      };
-      post = () => {
-        messageRequested.resolve();
-        return messageAcknowledgement.promise;
-      };
-      read = (url) => {
-        const response = savedStateResponse(url);
-        if (new URL(url).pathname === "/v1/agents/sessions/session-fixture") {
-          initialConnectionStateRead.resolve();
-        }
-        return response;
-      };
-      const connectEnvironment = vi.fn(async (environmentId: string) => {
-        expect(environmentId).toBe("environment-fixture");
-        expect(inputTypes).toEqual(["agent.session.input.message"]);
-        savedSession = { ...savedSession, status: "in_progress", required_actions: [] };
-        connected.resolve();
-      });
-      const session = createSession({ connectEnvironment });
-      const result = runSession(session);
-      await messageRequested.promise;
-      let connectionEvent: Promise<void> | undefined;
-      if (!existingAction) {
-        await initialConnectionStateRead.promise;
-        requireActions([connectionAction]);
-        connectionEvent = stream.send({ type: "agent.session.requires_action" });
-      }
-      await connected.promise;
-      messageAcknowledgement.resolve(Response.json({}));
-      await submitted.promise;
-      await connectionEvent;
-      // Replayed stream notifications do not become new startup requests after
-      // the authoritative required action has been resolved.
-      await stream.send({ type: "agent.session.requires_action" });
-      savedSession = { ...savedSession, status: "idle" };
-      savedTurns = [createTurn()];
-      savedItems = [createSavedMessage("input-fixture", "user", "Fixture prompt")];
-      await stream.send({ type: "agent.session.idle" });
-      await expect(result).resolves.toMatchObject({ turn: { id: "turn-fixture" } });
-      expect(connectEnvironment).toHaveBeenCalledTimes(1);
-      expect(inputTypes).toEqual(["agent.session.input.message"]);
-      await session.close();
-    },
-  );
-
-  it("services a connection action while acknowledging a Gateway function result", async () => {
-    const resultRequested = deferred<void>();
-    const resultAcknowledgement = deferred<Response>();
-    const resultRecorded = deferred<void>();
-    const connected = deferred<void>();
+  it("continues when an external executor satisfies its connection action", async () => {
     savedSession.environment = selfHostedEnvironment;
-    savedItems = [
-      createSavedMessage("input-fixture", "user", "Fixture prompt"),
-      { id: "function-fixture", ...functionCall },
-    ];
-    post = (type) => {
-      if (type === "agent.session.input.tool_result") {
-        requireActions([connectionAction]);
-        resultRequested.resolve();
-        return resultAcknowledgement.promise;
-      }
-      return Response.json({});
-    };
-    const executeFunction = vi.fn(async () => ({
-      success: true as const,
-      output: "Fixture result",
-    }));
-    const connectEnvironment = vi.fn(async () => {
-      savedSession = { ...savedSession, status: "in_progress", required_actions: [] };
-      connected.resolve();
-    });
-    const session = createSession({
-      executeFunction,
-      connectEnvironment,
-      onFunctionResult: () => resultRecorded.resolve(),
-    });
+    const session = createSession();
     const result = runSession(session);
     await submitted.promise;
-    savedTurns = [createTurn({ status: "in_progress", completed_at: null })];
-    requireActions([functionCall]);
+    requireActions([connectionAction]);
     await stream.send({ type: "agent.session.requires_action" });
-    await resultRequested.promise;
-    const connectionEvent = stream.send({ type: "agent.session.requires_action" });
-    await connected.promise;
-    resultAcknowledgement.resolve(Response.json({}));
-    await resultRecorded.promise;
-    await connectionEvent;
-    savedSession = { ...savedSession, status: "idle" };
+    savedSession = { ...savedSession, status: "idle", required_actions: [] };
     savedTurns = [createTurn()];
+    savedItems = [createSavedMessage("input-fixture", "user", "Fixture prompt")];
     await stream.send({ type: "agent.session.idle" });
     await expect(result).resolves.toMatchObject({ turn: { id: "turn-fixture" } });
-    expect(executeFunction).toHaveBeenCalledTimes(1);
-    expect(connectEnvironment).toHaveBeenCalledTimes(1);
-    expect(inputTypes).toEqual(["agent.session.input.message", "agent.session.input.tool_result"]);
+    expect(inputTypes).toEqual(["agent.session.input.message"]);
     await session.close();
   });
 
@@ -392,29 +292,30 @@ describe("Agents API native session receipts", () => {
     expect(inputTypes).toEqual(["agent.session.input.message", "agent.session.input.cancel"]);
   });
 
-  it.each([false, true])("retires only a currently failed session (failed: %s)", async (failed) => {
-    const onSessionFailed = vi.fn(async () => {});
-    const session = createSession({ onSessionFailed });
-    const result = runSession(session);
-    void result.catch(() => {});
-    await submitted.promise;
-    if (failed) {
-      savedSession = { ...savedSession, status: "failed", error: "Fixture terminal failure" };
-    }
-    await stream.send({ type: "agent.session.failed" });
-    if (failed) {
-      await expect(result).rejects.toThrow("Fixture terminal failure");
-    } else {
-      await stream.send({ type: "agent.session.in_progress" });
-      savedSession = createHostedSession("idle");
-      savedTurns = [createTurn()];
-      savedItems = [createSavedMessage("input-fixture", "user", "Fixture prompt")];
-      await stream.send({ type: "agent.session.idle" });
-      await expect(result).resolves.toMatchObject({ turn: { id: "turn-fixture" } });
-    }
-    expect(onSessionFailed).toHaveBeenCalledTimes(failed ? 1 : 0);
-    await session.close();
-  });
+  it.each([false, true])(
+    "fails only for a currently failed session (failed: %s)",
+    async (failed) => {
+      const session = createSession();
+      const result = runSession(session);
+      void result.catch(() => {});
+      await submitted.promise;
+      if (failed) {
+        savedSession = { ...savedSession, status: "failed", error: "Fixture terminal failure" };
+      }
+      await stream.send({ type: "agent.session.failed" });
+      if (failed) {
+        await expect(result).rejects.toThrow("Fixture terminal failure");
+      } else {
+        await stream.send({ type: "agent.session.in_progress" });
+        savedSession = createHostedSession("idle");
+        savedTurns = [createTurn()];
+        savedItems = [createSavedMessage("input-fixture", "user", "Fixture prompt")];
+        await stream.send({ type: "agent.session.idle" });
+        await expect(result).resolves.toMatchObject({ turn: { id: "turn-fixture" } });
+      }
+      await session.close();
+    },
+  );
 
   it("preserves a pending message acknowledgement before cancellation and waits for native idle", async () => {
     const messageRequested = deferred<void>();

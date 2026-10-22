@@ -2,7 +2,7 @@ import { createMemo, createSignal, Match, Show, Switch } from "solid-js";
 import type { ConfigAutoSaveStatus } from "../lib/config/config-state-model.ts";
 import { t } from "../lib/reactive/i18n.ts";
 import { createTimeout } from "../lib/reactive/timers.ts";
-import { defineSolidBridge, type SolidBridgeElement } from "../lib/solid-bridge.ts";
+import { ConfigError } from "./config-error.tsx";
 import { Icon } from "./solid/icon.tsx";
 import { ThemeBrandingIcon } from "./theme-brand-icon.tsx";
 
@@ -12,6 +12,7 @@ export type SettingsSaveIndicatorProps = {
   status: ConfigAutoSaveStatus | "recovery";
   lastError: string | null;
   needsApply: boolean;
+  saving: boolean;
   applying: boolean;
   applyDisabled: boolean;
   onRetry: () => void;
@@ -33,7 +34,10 @@ function Claw(props: { saved?: boolean }) {
     <span
       class={[
         "settings-save-indicator__claw",
-        `settings-save-indicator__claw--${props.saved ? "saved" : "saving"}`,
+        {
+          "settings-save-indicator__claw--saved": props.saved,
+          "settings-save-indicator__claw--saving": !props.saved,
+        },
       ]}
       aria-hidden="true"
     >
@@ -42,10 +46,10 @@ function Claw(props: { saved?: boolean }) {
   );
 }
 
-function SaveIndicatorContent(input: { props?: SettingsSaveIndicatorProps }) {
-  const status = createMemo(() => input.props?.status);
+export function SettingsSaveIndicator(props: SettingsSaveIndicatorProps) {
+  const status = createMemo(() => (props.saving ? "saving" : props.status));
   // Only a saving → saved transition starts a fresh display window.
-  type SaveState = SettingsSaveIndicatorProps["status"] | "saved-visible" | undefined;
+  type SaveState = SettingsSaveIndicatorProps["status"] | "saved-visible";
   const [saved, setSaved] = createSignal<SaveState>((previous) =>
     previous === "saving" && status() === "saved" ? "saved-visible" : status(),
   );
@@ -54,22 +58,16 @@ function SaveIndicatorContent(input: { props?: SettingsSaveIndicatorProps }) {
     () => (saved() === "saved-visible" ? SAVED_VISIBLE_MS : undefined),
   );
   const state = createMemo(() => {
-    const props = input.props;
-    if (!props) {
-      return undefined;
-    }
     if (props.applying) {
       return "applying";
     }
-    if (["saving", "recovery", "rejected", "error", "paused", "conflict"].includes(props.status)) {
-      return props.status;
+    if (["saving", "recovery", "rejected", "error", "paused", "conflict"].includes(status())) {
+      return status();
     }
     return saved() === "saved-visible" ? "saved" : props.needsApply ? "apply" : undefined;
   });
-  const title = () =>
-    state() === "error" ? input.props?.lastError?.trim() || undefined : undefined;
-  return (
-    <Show when={input.props && state()}>
+  function Feedback(feedback: { error?: string }) {
+    return (
       <div
         class={[
           "settings-save-indicator",
@@ -84,8 +82,10 @@ function SaveIndicatorContent(input: { props?: SettingsSaveIndicatorProps }) {
         ]}
         role="status"
         aria-live="polite"
-        title={title()}
-        aria-label={title() ? `${t("configView.autoSaveFailed")}: ${title()}` : undefined}
+        title={feedback.error}
+        aria-label={
+          feedback.error ? `${t("configView.autoSaveFailed")}: ${feedback.error}` : undefined
+        }
       >
         <Switch>
           <Match when={state() === "applying"}>
@@ -99,32 +99,32 @@ function SaveIndicatorContent(input: { props?: SettingsSaveIndicatorProps }) {
             <span>{t("configView.autoSaveSaving")}</span>
           </Match>
           <Match when={state() === "recovery"}>
-            <span>{input.props!.lastError}</span>
-            {action(t("configView.recoveryReload"), () => input.props!.onReload())}
+            <span>{props.lastError}</span>
+            {action(t("configView.recoveryReload"), () => props.onReload())}
           </Match>
           <Match when={state() === "rejected"}>
             <span>{t("configView.autoSaveRejected")}</span>
             <span>{t("configView.autoSaveRejectedHint")}</span>
-            <Show when={input.props!.lastError}>
+            <Show when={props.lastError}>
               <details>
                 <summary>{t("configView.rejectionDetails")}</summary>
-                <span>{input.props!.lastError}</span>
+                <span>{props.lastError}</span>
               </details>
             </Show>
-            {action(t("configView.retry"), () => input.props!.onRetry())}
-            {action(t("configView.recoveryReload"), () => input.props!.onReload())}
+            {action(t("configView.retry"), () => props.onRetry())}
+            {action(t("configView.recoveryReload"), () => props.onReload())}
           </Match>
           <Match when={state() === "error"}>
             <span>{t("configView.autoSaveFailed")}</span>
-            {action(t("configView.retry"), () => input.props!.onRetry())}
+            {action(t("configView.retry"), () => props.onRetry())}
           </Match>
           <Match when={state() === "paused"}>
             <span>{t("configView.autoSavePaused")}</span>
-            {action(t("configView.saveNow"), () => input.props!.onSave())}
+            {action(t("configView.saveNow"), () => props.onSave())}
           </Match>
           <Match when={state() === "conflict"}>
             <span>{t("configView.autoSaveConflict")}</span>
-            {action(t("common.reload"), () => input.props!.onReload())}
+            {action(t("common.reload"), () => props.onReload())}
           </Match>
           <Match when={state() === "saved"}>
             <Claw saved />
@@ -137,42 +137,34 @@ function SaveIndicatorContent(input: { props?: SettingsSaveIndicatorProps }) {
             <button
               class="btn btn--xs settings-save-indicator__apply"
               type="button"
-              disabled={input.props!.applyDisabled}
-              onClick={() => input.props!.onApply()}
+              disabled={props.applyDisabled}
+              onClick={() => props.onApply()}
             >
               {t("configView.applyChanges")}
             </button>
           </Match>
         </Switch>
       </div>
-    </Show>
-  );
-}
-
-defineSolidBridge<{ props?: SettingsSaveIndicatorProps }>(
-  "openclaw-settings-save-indicator",
-  (props) => <SaveIndicatorContent props={props.props} />,
-  {
-    properties: { props: { default: undefined, attribute: false } },
-  },
-);
-
-declare global {
-  interface HTMLElementTagNameMap {
-    "openclaw-settings-save-indicator": SolidBridgeElement<{
-      props?: SettingsSaveIndicatorProps;
-    }>;
+    );
   }
+  return (
+    <openclaw-settings-save-indicator>
+      <Show when={state()}>
+        <ConfigError
+          message={state() === "error" ? props.lastError?.trim() : undefined}
+          fallback={<Feedback />}
+        >
+          {(message) => <Feedback error={message} />}
+        </ConfigError>
+      </Show>
+    </openclaw-settings-save-indicator>
+  );
 }
 
 declare module "@solidjs/web" {
   namespace JSX {
     interface IntrinsicElements {
-      "openclaw-settings-save-indicator": HTMLAttributes<
-        HTMLElementTagNameMap["openclaw-settings-save-indicator"]
-      > & {
-        "prop:props"?: SettingsSaveIndicatorProps;
-      };
+      "openclaw-settings-save-indicator": HTMLAttributes<HTMLElement>;
     }
   }
 }

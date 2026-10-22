@@ -1,5 +1,5 @@
 import type { JSX } from "@solidjs/web";
-import { For, createSignal, onCleanup } from "solid-js";
+import { For, action, createMemo, createOptimistic, createSignal, onSettled } from "solid-js";
 import {
   validateApprovalHistoryResult,
   type ApprovalHistoryResult,
@@ -27,11 +27,14 @@ import {
   LearnMoreLink,
 } from "../../components/solid/settings-ui.tsx";
 import { SettingsWorkspace } from "../../components/solid/settings-workspace.tsx";
+import { registerApprovalsEnglish } from "../../i18n/locales/en-approvals.ts";
 import { formatUiError } from "../../lib/format-error.ts";
 import { useApplication } from "../../lib/reactive/context.ts";
 import { formatDateTimeMs } from "../../lib/reactive/format.ts";
 import { useGatewayPage } from "../../lib/reactive/gateway-page.ts";
-import { t } from "../../lib/reactive/i18n.ts";
+import { registerEnglishCatalog, t } from "../../lib/reactive/i18n.ts";
+
+registerEnglishCatalog(registerApprovalsEnglish);
 
 const APPROVAL_HISTORY_PAGE_SIZE = 50;
 
@@ -49,9 +52,6 @@ function grantStateLabel(grant: ExecApprovalStandingGrant, nowMs: number): strin
   return t("standingGrants.stateUntilRevoked");
 }
 
-function grantIsActive(grant: ExecApprovalStandingGrant, nowMs: number): boolean {
-  return grant.revokedAtMs === null && (grant.expiresAtMs === null || grant.expiresAtMs > nowMs);
-}
 const APPROVAL_HISTORY_REQUIRED_SCOPE = "operator.approvals";
 const APPROVALS_DOCS_URL = "https://docs.openclaw.ai/tools/exec-approvals";
 
@@ -170,6 +170,24 @@ export function ApprovalsPage() {
     revision();
     return state;
   };
+  const requestGeneration = createMemo(() => view().requestGeneration);
+  const revokePresentation = createMemo(() => {
+    const generation = requestGeneration();
+    const [saving, setSaving] = createOptimistic(false);
+    return { generation, saving, setSaving };
+  });
+  let presentationLifetime = Promise.withResolvers<void>();
+  const presentRevoke = action(function* (
+    presentation: ReturnType<typeof revokePresentation>,
+    completion: Promise<void>,
+    retired: Promise<void>,
+  ) {
+    if (!disposed && presentation.generation === state.requestGeneration) {
+      presentation.setSaving(true);
+    }
+    yield Promise.race([completion, retired]);
+  });
+  const revokeSaving = () => revokePresentation().saving();
   let stopEvents: (() => void) | undefined;
   useGatewayPage({
     getGateway: () => context.gateway,
@@ -198,7 +216,7 @@ export function ApprovalsPage() {
       applyGatewaySnapshot(snapshot);
     },
   });
-  onCleanup(() => {
+  onSettled(() => () => {
     disposed = true;
     stopEvents?.();
     resetHistory(false);
@@ -206,6 +224,9 @@ export function ApprovalsPage() {
   });
 
   function resetHistory(clearData: boolean) {
+    // Retire presentation before a held action can delay the next connection's view.
+    presentationLifetime.resolve();
+    presentationLifetime = Promise.withResolvers<void>();
     state.requestGeneration += 1;
     state.loadKind = null;
     state.historyRefreshPending = false;
@@ -367,29 +388,35 @@ export function ApprovalsPage() {
       return;
     }
     const isCurrent = () => isCurrentRequest(client, gateway, generation);
+    const presentation = revokePresentation();
+    const retired = presentationLifetime.promise;
     state.revokingGrantId = grantId;
-    publish();
-    try {
-      await client.request("exec.approval.grants.revoke", { grantId });
-      if (!isCurrent()) {
-        return;
-      }
-      state.grantsGeneration += 1;
-      const nowMs = Date.now();
-      state.grants = state.grants.map((grant) =>
-        grant.grantId === grantId ? { ...grant, revokedAtMs: nowMs } : grant,
-      );
-      state.grantsError = null;
-      publish();
-    } catch (error) {
-      if (isCurrent()) {
-        state.grantsError = formatUiError(error);
+    const completion = applyRevoke(client);
+    await presentRevoke(presentation, completion, retired);
+
+    async function applyRevoke(admittedClient: GatewayBrowserClient) {
+      try {
+        await admittedClient.request("exec.approval.grants.revoke", { grantId });
+        if (!isCurrent()) {
+          return;
+        }
+        state.grantsGeneration += 1;
+        const nowMs = Date.now();
+        state.grants = state.grants.map((grant) =>
+          grant.grantId === grantId ? { ...grant, revokedAtMs: nowMs } : grant,
+        );
+        state.grantsError = null;
         publish();
-      }
-    } finally {
-      if (isCurrent()) {
-        state.revokingGrantId = null;
-        publish();
+      } catch (error) {
+        if (isCurrent()) {
+          state.grantsError = formatUiError(error);
+          publish();
+        }
+      } finally {
+        if (isCurrent()) {
+          state.revokingGrantId = null;
+          publish();
+        }
       }
     }
   }
@@ -397,7 +424,7 @@ export function ApprovalsPage() {
   function GrantRow(props: { grant: ExecApprovalStandingGrant }) {
     const revokeLabel = () =>
       t(
-        view().revokingGrantId === props.grant.grantId
+        revokeSaving() && view().revokingGrantId === props.grant.grantId
           ? "standingGrants.revoking"
           : "standingGrants.revoke",
       );
@@ -413,11 +440,12 @@ export function ApprovalsPage() {
           {grantStateLabel(props.grant, Date.now())}
         </td>
         <td>
-          {grantIsActive(props.grant, Date.now()) ? (
+          {props.grant.revokedAtMs === null &&
+          (props.grant.expiresAtMs === null || props.grant.expiresAtMs > Date.now()) ? (
             <button
               class="btn btn--sm"
               aria-label={`${revokeLabel()}: ${props.grant.cronJobName ?? props.grant.cronJobId} — ${props.grant.command}`}
-              disabled={!view().connected || view().revokingGrantId !== null}
+              disabled={revokeSaving() || !view().connected}
               onClick={() => void revokeGrant(props.grant.grantId)}
             >
               {revokeLabel()}
