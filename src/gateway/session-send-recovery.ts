@@ -22,11 +22,11 @@ import { retryAsync } from "../infra/retry.js";
 import { isSqliteLockError } from "../infra/sqlite-error-diagnostics.js";
 import { parseAgentSessionKey } from "../routing/session-key.js";
 import {
-  AgentDatabaseAdmissionError,
-  listAgentDatabaseAdmissionRefusals,
-  readAgentDatabaseAdmissionRefusal,
-} from "../state/agent-database-admission.js";
-import { waitForAgentDatabasePreparation } from "../state/agent-database-preparation-context.js";
+  captureSessionTarget,
+  runSessionMutation,
+} from "../sessions/session-controller.lifecycle.js";
+import { AgentDatabaseAdmissionError } from "../state/agent-database-admission.js";
+import { recoverAfterAgentDatabasePreparation } from "../state/agent-database-preparation-recovery.js";
 import { INTERNAL_MESSAGE_CHANNEL } from "../utils/message-channel.js";
 import { CHAT_INPUT_RECOVERY_MAX_AGE_MS } from "./chat-input-recovery-source.js";
 import type { RestoredGatewayOperatorAuthority } from "./operator-run-recovery.js";
@@ -54,33 +54,17 @@ export async function recoverSessionSendDeliveries(
     return;
   }
   const config = context.getRuntimeConfig();
-  const pendingAgents = listAgentDatabaseAdmissionRefusals()
-    .filter((refusal) => refusal.code === "agent-database-inspection-pending")
-    .map((refusal) => refusal.agentId);
   const replaySession = pLimit(4);
-  await recoverSessionSendDeliveriesForAgents(context, config, signal, replaySession, startupTrace);
-  // Discovery skips pending stores. Join their existing admission owner before rescanning.
-  const rescans = await Promise.allSettled(
-    pendingAgents.map(async (agentId) => {
-      await waitForAgentDatabasePreparation(agentId, { signal });
-      signal.throwIfAborted();
-      if (!readAgentDatabaseAdmissionRefusal(agentId)) {
-        await recoverSessionSendDeliveriesForAgents(
-          context,
-          context.getRuntimeConfig(),
-          signal,
-          replaySession,
-          startupTrace,
-          new Set([agentId]),
-        );
-      }
-    }),
+  await recoverAfterAgentDatabasePreparation(signal, (agentIds) =>
+    recoverSessionSendDeliveriesForAgents(
+      context,
+      agentIds ? context.getRuntimeConfig() : config,
+      signal,
+      replaySession,
+      startupTrace,
+      agentIds,
+    ),
   );
-  for (const result of rescans) {
-    if (result.status === "rejected") {
-      throw result.reason;
-    }
-  }
 }
 
 async function recoverSessionSendDeliveriesForAgents(
@@ -525,23 +509,38 @@ async function recoverSessionSendDeliveriesForAgents(
                   : "");
               const result = await measureStartup(startupTrace, "sidecars.delivery-notices", () =>
                 retry(() =>
-                  withSessionTranscriptWriteAssertion(scope, assertCurrent, () =>
-                    appendSessionTranscriptReport(scope, {
-                      kind: "custom",
-                      customTypes: [customType],
-                      selectReport: (latest) =>
-                        latest?.content === content &&
-                        JSON.stringify(latest.details) === JSON.stringify(details)
-                          ? undefined
-                          : {
-                              customType,
-                              content,
-                              details,
-                              display: true,
-                              excludeFromContext: true,
-                            },
+                  // A display-only report still advances transcript ancestry. Wait for the
+                  // selected turn before it can close an admitted keyed user during preparation.
+                  runSessionMutation({
+                    target: captureSessionTarget({
+                      storeScope: scope.storePath,
+                      sessionKey,
+                      agentId: scope.agentId,
+                      incarnation: scope.sessionId,
                     }),
-                  ),
+                    requiredSessionId: scope.sessionId,
+                    policy: "wait",
+                    signal,
+                    assertCurrent,
+                    run: () =>
+                      withSessionTranscriptWriteAssertion(scope, assertCurrent, () =>
+                        appendSessionTranscriptReport(scope, {
+                          kind: "custom",
+                          customTypes: [customType],
+                          selectReport: (latest) =>
+                            latest?.content === content &&
+                            JSON.stringify(latest.details) === JSON.stringify(details)
+                              ? undefined
+                              : {
+                                  customType,
+                                  content,
+                                  details,
+                                  display: true,
+                                  excludeFromContext: true,
+                                },
+                        }),
+                      ),
+                  }),
                 ),
               );
               if (!result.ok) {
