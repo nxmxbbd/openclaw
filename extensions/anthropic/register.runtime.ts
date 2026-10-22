@@ -274,11 +274,8 @@ function buildAnthropicForwardCompatModel(
   }
   const provider =
     normalizedProvider === CLAUDE_CLI_BACKEND_ID ? CLAUDE_CLI_BACKEND_ID : PROVIDER_ID;
-  // This hand-built row replaces the catalog row when the runtime prefers
-  // plugin-resolved modern models, so it must carry the catalog's compat
-  // capability metadata (for example compat.codeMode) instead of dropping it.
-  // Registry compat wins when present (it may carry config overrides); the
-  // manifest index covers empty-registry runs such as env-key-only sessions.
+  // Plugin-resolved Anthropic rows retain manifest capabilities and context-window choices.
+  // Registry compat overrides the manifest default.
   const catalogModel = ctx.modelRegistry.find(provider, trimmedModelId);
   const manifestModel =
     provider === PROVIDER_ID ? resolveAnthropicManifestModel(trimmedModelId) : undefined;
@@ -288,9 +285,6 @@ function buildAnthropicForwardCompatModel(
     name: trimmedModelId,
     provider,
     ...(compat ? { compat } : {}),
-    // Empty-registry runs (including runs after a failed live discovery with no
-    // earlier success) budget from this row: without the declared choices, a
-    // session that selected a smaller window silently runs on the full one.
     ...(manifestModel?.contextWindows
       ? {
           contextWindows: manifestModel.contextWindows,
