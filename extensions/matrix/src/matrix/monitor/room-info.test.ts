@@ -120,13 +120,17 @@ describe("createMatrixRoomInfoResolver", () => {
 
   it("serves the current name of a renamed room only when asked for it", async () => {
     let roomName = "Original Room";
-    const client = createRoomStateClient(async (roomId, eventType) => {
+    const lookup = vi.fn(async (roomId: string, eventType: string) => {
       if (eventType === "m.room.name") {
         return { name: roomId === "!room:example.org" ? roomName : "Other Room" };
       }
       return { alias: "#room:example.org" };
     });
-    const resolver = createMatrixRoomInfoResolver(client);
+    const resolver = createMatrixRoomInfoResolver({
+      getRoomStateEvent: lookup,
+    } as unknown as MatrixClient);
+    const calls = (eventType: string) =>
+      lookup.mock.calls.filter(([, calledType]) => calledType === eventType).length;
 
     await resolver.getRoomInfo("!room:example.org", { includeAliases: true });
     await resolver.getRoomInfo("!other:example.org");
@@ -144,7 +148,7 @@ describe("createMatrixRoomInfoResolver", () => {
     await expect(
       resolver.getRoomInfo("!other:example.org", { currentName: true }),
     ).resolves.toMatchObject({ name: "Other Room" });
-    expect(getRoomStateCallCount(client, "m.room.name")).toBe(3);
-    expect(getRoomStateCallCount(client, "m.room.canonical_alias")).toBe(1);
+    expect(calls("m.room.name")).toBe(3);
+    expect(calls("m.room.canonical_alias")).toBe(1);
   });
 });
