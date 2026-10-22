@@ -157,6 +157,7 @@ describe("command palette paste-only images", () => {
     expect(paste(input, [image()]).defaultPrevented).toBe(true);
     await palette.updateComplete;
     expect(start().disabled).toBe(true);
+    await vi.dynamicImportSettled();
     await waitForSolid(() =>
       expect(query('.chat-attachment-thumb[aria-busy="true"]')).not.toBeNull(),
     );
@@ -221,7 +222,7 @@ describe("command palette paste-only images", () => {
       expect(query('[role="alert"]')?.textContent).toContain("Image turn rejected"),
     );
     expect(start().disabled).toBe(true);
-    expect(query(".chat-attachment-thumb img")).not.toBeNull();
+    await waitForSolid(() => expect(query(".chat-attachment-thumb img")).not.toBeNull());
     query<HTMLButtonElement>(".chat-attachment-remove")!.click();
     await palette.updateComplete;
     expect(query('[role="alert"]')).toBeNull();
@@ -310,7 +311,9 @@ describe("command palette paste-only images", () => {
       // A valid text/remaining-image prompt could be sent explicitly, but the
       // cold submit must not silently drop a rejected clipboard image.
       await vi.waitFor(() => expect(start().disabled).toBe(false));
-      expect(queryAll(".chat-attachment-thumb")).toHaveLength(outcome === "partial" ? 1 : 0);
+      await waitForSolid(() =>
+        expect(queryAll(".chat-attachment-thumb")).toHaveLength(outcome === "partial" ? 1 : 0),
+      );
       expect(query(".chat-attachment-failures")).toBeNull();
       expect(replacement.value).toBe("Keep every image");
       expect(toast.showToast).toHaveBeenCalledExactlyOnceWith({
@@ -330,4 +333,21 @@ describe("command palette paste-only images", () => {
     }
     loadingView.unmount();
   });
+});
+
+it("keeps mobile palette Return native and starts only from its button", async () => {
+  vi.spyOn(navigator, "userAgent", "get").mockReturnValue("Android");
+  const { palette, input, start, context } = await mount();
+  input.value = "A mobile prompt";
+  input.dispatchEvent(new Event("input", { bubbles: true }));
+  await vi.waitFor(() => expect(start().disabled).toBe(false));
+  for (const modifiers of [{}, { ctrlKey: true }, { metaKey: true }]) {
+    const event = key(input, { key: "Enter", ...modifiers });
+    expect(event.defaultPrevented).toBe(false);
+    expect(context.sessions.createResult).not.toHaveBeenCalled();
+    expect(palette.isOpen).toBe(true);
+  }
+  expect(start().querySelector("kbd")).toBeNull();
+  start().click();
+  await vi.waitFor(() => expect(context.sessions.createResult).toHaveBeenCalledOnce());
 });
