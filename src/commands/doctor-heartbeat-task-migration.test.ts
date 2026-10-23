@@ -504,6 +504,40 @@ describe("heartbeat scratch task cron migration", () => {
     expect(readScratch(fixture).scratch?.content).not.toContain("tasks:");
   });
 
+  it("retires HEARTBEAT_OK in new and stored task prompts", async () => {
+    const prompt = (token: string) =>
+      `Check the queue; if nothing needs attention, reply ${token}. Keep HEARTBEAT_OK_LOG.`;
+    const fixture = await createFixture(
+      2_000_000_000_000,
+      `tasks:\n  - name: queue\n    interval: 1h\n    prompt: ${prompt("HEARTBEAT_OK")}\n`,
+    );
+    const store = await loadCronJobsStore(fixture.storePath);
+    const stored: CronJob = {
+      id: "legacy-stored",
+      createdAtMs: fixture.nowMs,
+      updatedAtMs: fixture.nowMs,
+      declarationKey: heartbeatTaskDeclarationKey("main", "stored"),
+      name: "stored",
+      agentId: "main",
+      enabled: true,
+      schedule: { kind: "every", everyMs: 60 * 60_000, anchorMs: fixture.nowMs },
+      payload: { kind: "systemEvent", text: prompt("HEARTBEAT_OK") },
+      sessionTarget: "main",
+      wakeMode: "next-heartbeat",
+      state: {},
+    };
+    await saveCronJobsStore(fixture.storePath, { ...store, jobs: [...store.jobs, stored] });
+
+    expect((await migrate(fixture)).warnings).toEqual([]);
+    expect(await migrateStoredHeartbeatTaskJobs(fixture.cfg, fixture.env)).toBe(1);
+    const messages = Object.fromEntries(
+      (await loadCronJobsStore(fixture.storePath)).jobs
+        .filter((job) => job.id !== fixture.monitor.id)
+        .map((job) => [job.name, job.payload.kind === "agentTurn" && job.payload.message]),
+    );
+    expect(messages).toEqual({ queue: prompt("NO_REPLY"), stored: prompt("NO_REPLY") });
+  });
+
   it("leaves cron jobs and legacy timestamps untouched when the scratch revision changes", async () => {
     const fixture = await createFixture(2_000_000_000_000);
     const existingSnapshot = await createExistingInboxJob(fixture);

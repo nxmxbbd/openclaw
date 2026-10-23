@@ -25,6 +25,7 @@ import { getCronStoreKysely } from "../cron/store/schema.js";
 import type { CronStoredJob as CronJob } from "../cron/types.js";
 import { executeSqliteQuerySync } from "../infra/kysely-sync.js";
 import type { EngineConnection } from "../infra/sql-connection.js";
+import { migrateHeartbeatPrompt } from "./doctor-heartbeat-legacy.js";
 import {
   heartbeatTaskDeclarationKey,
   isHeartbeatTaskCronJob,
@@ -76,7 +77,7 @@ function taskPayload(monitor: CronJob, message: string) {
     throw new Error(`Automation ${monitor.id} has not completed heartbeat conversion`);
   }
   const { skipIfScratchEmpty: _skipIfScratchEmpty, ...payload } = monitor.payload;
-  return { ...payload, message };
+  return { ...payload, message: migrateHeartbeatPrompt(message) };
 }
 
 function taskJobInput(params: TaskJobInput) {
