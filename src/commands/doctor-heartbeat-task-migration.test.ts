@@ -706,6 +706,47 @@ tasks:
     ).toEqual([]);
   });
 
+  it("keeps a tasks: marker without task entries as scratch", async () => {
+    const content = "# Checklist\n\ntasks:\n- check the queue\n- review alerts\n";
+    const fixture = await createFixture(2_000_000_000_000, content);
+
+    await expect(collectHeartbeatTaskMigrationFindings(fixture.cfg, fixture.env)).resolves.toEqual(
+      [],
+    );
+    await expect(migrate(fixture)).resolves.toEqual({ changes: [], warnings: [] });
+
+    expect(readScratch(fixture).scratch?.content).toBe(content);
+    expect(
+      (await loadCronJobsStore(fixture.storePath)).jobs.filter(
+        (job) => job.id !== fixture.monitor.id,
+      ),
+    ).toEqual([]);
+  });
+
+  it.each([
+    [
+      "a comment",
+      "tasks:\n  # inbox\n  - name: inbox\n    interval: 1h\n    prompt: Check inbox\n",
+    ],
+    [
+      "a bullet",
+      "tasks:\n- check the queue\n- name: inbox\n  interval: 1h\n  prompt: Check inbox\n",
+    ],
+  ])("still refuses task entries placed after %s that ends the block", async (_shape, content) => {
+    const fixture = await createFixture(2_000_000_000_000, content);
+
+    await expect(collectHeartbeatTaskMigrationFindings(fixture.cfg, fixture.env)).resolves.toEqual([
+      expect.objectContaining({
+        severity: "error",
+        requirement: "heartbeat-task-migration-blocked",
+      }),
+    ]);
+    const result = await migrate(fixture);
+
+    expect(result.warnings.join("\n")).toContain("no complete name/interval/prompt entries");
+    expect(readScratch(fixture).scratch?.content).toBe(content);
+  });
+
   it("does not migrate a task block hidden by a mid-line HTML comment opener", async () => {
     const content = `Notes <!--
 tasks:

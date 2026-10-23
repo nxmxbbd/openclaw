@@ -7,6 +7,7 @@ export type LegacyHeartbeatTask = {
 };
 
 type LegacyHeartbeatTaskDocument = {
+  /** An entry-less marker is ordinary scratch unless task syntax sits outside its block. */
   hasTasksBlock: boolean;
   taskEntryCount: number;
   tasks: LegacyHeartbeatTask[];
@@ -76,6 +77,9 @@ function unquoteTaskValue(value: string): string {
   return value.trim().replace(/^["']|["']$/g, "");
 }
 
+// Field-like lines the parser could not place in a block still carry scheduling data.
+const STRAY_TASK_SYNTAX = /^(?:- name:|interval:|prompt:)/;
+
 /**
  * Parses and marks removable task syntax in one pass. The same boundary decision
  * therefore owns both cron creation and the bytes Doctor may remove.
@@ -85,7 +89,8 @@ export function analyzeLegacyHeartbeatTasks(content: string): LegacyHeartbeatTas
   const removedLineIndexes = new Set<number>();
   const tasks: LegacyHeartbeatTask[] = [];
   let taskEntryCount = 0;
-  let hasTasksBlock = false;
+  let markerSeen = false;
+  let strayTaskSyntax = false;
   let inTasksBlock = false;
   let currentTask: Partial<LegacyHeartbeatTask> | undefined;
   let orphanEntryOpen = false;
@@ -109,12 +114,13 @@ export function analyzeLegacyHeartbeatTasks(content: string): LegacyHeartbeatTas
     if (trimmed === "tasks:") {
       finishCurrentTask();
       orphanEntryOpen = false;
-      hasTasksBlock = true;
+      markerSeen = true;
       inTasksBlock = true;
       removedLineIndexes.add(index);
       continue;
     }
     if (!inTasksBlock) {
+      strayTaskSyntax ||= STRAY_TASK_SYNTAX.test(trimmed);
       continue;
     }
 
@@ -155,6 +161,7 @@ export function analyzeLegacyHeartbeatTasks(content: string): LegacyHeartbeatTas
 
     // Any other visible non-empty line is surrounding scratch, even when it
     // is indented. It ends the block and is preserved byte-for-byte.
+    strayTaskSyntax ||= STRAY_TASK_SYNTAX.test(trimmed);
     finishCurrentTask();
     orphanEntryOpen = false;
     inTasksBlock = false;
@@ -162,7 +169,7 @@ export function analyzeLegacyHeartbeatTasks(content: string): LegacyHeartbeatTas
   finishCurrentTask();
 
   return {
-    hasTasksBlock,
+    hasTasksBlock: taskEntryCount > 0 || (markerSeen && strayTaskSyntax),
     taskEntryCount,
     tasks,
     strippedContent: lines

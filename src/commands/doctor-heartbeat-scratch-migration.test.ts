@@ -597,4 +597,25 @@ describe("HEARTBEAT.md cron scratch migration", () => {
     expect(result.warnings.join("\n")).toContain("escapes the agent workspace");
     await expect(fs.lstat(fixture.heartbeatPath)).resolves.toMatchObject({});
   });
+
+  it("completes the cutover when HEARTBEAT.md has a tasks: marker without task entries", async () => {
+    const fixture = await createFixture();
+    const content = "# Checklist\n\ntasks:\n- check the queue\n- review alerts\n";
+    await fs.writeFile(fixture.heartbeatPath, content);
+
+    const retired = await retireHeartbeatWithDoctor(fixture.cfg);
+
+    const { monitor, storePath } = await loadMonitor();
+    expect(readCronJobScratchState(storePath, monitor.id).scratch?.content).toBe(content);
+    expect(
+      withExistingOpenClawStateDatabaseReadOnly(({ db }) =>
+        readDefaultProactiveJobReceiptInDatabase(db, storePath, "main"),
+      ),
+    ).toMatchObject({ jobId: monitor.id, phase: "complete" });
+    await expect(fs.lstat(fixture.heartbeatPath)).rejects.toMatchObject({ code: "ENOENT" });
+    const jobs = (await loadCronJobsStore(storePath)).jobs;
+    expect(jobs).toHaveLength(1);
+    await retireHeartbeatWithDoctor(retired);
+    expect((await loadCronJobsStore(storePath)).jobs).toEqual(jobs);
+  });
 });
