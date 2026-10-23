@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { makeCronJob } from "../../../cron/delivery.test-helpers.js";
+import { TEST_SCHEDULED_OCCURRENCE } from "../../../cron/scheduled-occurrence.test-support.js";
 import {
   submitSessionControllerInput,
   retireSessionControllerInput,
@@ -118,6 +119,7 @@ function retarget(run: Partial<FollowupRun["run"]>, params: Parameters<typeof re
 
 function scheduledAutomation(sessionModelOverrideSource?: "auto" | "user") {
   return {
+    occurrence: TEST_SCHEDULED_OCCURRENCE,
     job: makeCronJob({ sessionTarget: `session:${QUEUE_KEY}` }),
     admissionSource: "operator-schedule",
     assertCurrent() {},
