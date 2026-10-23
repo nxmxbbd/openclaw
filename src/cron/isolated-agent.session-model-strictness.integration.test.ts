@@ -11,6 +11,7 @@ import type { OpenClawConfig } from "../config/types.openclaw.js";
 import "../llm/ai-transport-host.js";
 import { withOpenClawTestState } from "../test-utils/openclaw-test-state.js";
 import { runCronIsolatedAgentTurn } from "./isolated-agent/run.js";
+import { TEST_SCHEDULED_OCCURRENCE } from "./scheduled-occurrence.test-support.js";
 import { loadCronJobsStore, saveCronJobsStore } from "./store.js";
 import type { CronStoredJob } from "./types.js";
 
@@ -176,6 +177,7 @@ describe("stored cron session model selections through the real embedded runner"
       await saveCronJobsStore(storePath, { version: 1, jobs: [stored] });
       const job = (await loadCronJobsStore(storePath)).jobs[0]!;
       const result = await runCronIsolatedAgentTurn({
+        occurrence: TEST_SCHEDULED_OCCURRENCE,
         cfg,
         deps: {},
         job,

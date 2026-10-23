@@ -14,6 +14,7 @@ import "../llm/ai-transport-host.js";
 import { resetSessionControllerStateForTest } from "../sessions/session-lifecycle-admission.test-support.js";
 import { withOpenClawTestState } from "../test-utils/openclaw-test-state.js";
 import { runCronSessionTurn } from "./session-run.js";
+import { TEST_SCHEDULED_OCCURRENCE } from "./scheduled-occurrence.test-support.js";
 import { loadCronJobsStore, saveCronJobsStore } from "./store.js";
 import type { CronStoredJob } from "./types.js";
 
@@ -264,6 +265,7 @@ describe("stored session model selections in scheduled session turns", () => {
       const [job, loadedActiveJob] = (await loadCronJobsStore(storePath)).jobs;
       const runTurn = (scheduled: CronStoredJob) =>
         runCronSessionTurn({
+          occurrence: TEST_SCHEDULED_OCCURRENCE,
           cfg,
           agentId: "main",
           sessionKey,
