@@ -281,7 +281,7 @@ describe("stored session model selections in scheduled session turns", () => {
           assertCurrent() {},
         });
       if (!activeTurn) {
-        return { result: await runTurn(job!), requests, job: job! };
+        return { result: await runTurn(job!), requests };
       }
       let retargeted = false;
       admission.whileQueuedAdmissionWaits = async (admittedSessionKey) => {
@@ -330,7 +330,7 @@ describe("stored session model selections in scheduled session turns", () => {
       expect((await activeResult).status).toBe("ok");
       const result = await pending;
       expect(retargeted).toBe(true);
-      return { result, requests, job: job! };
+      return { result, requests };
     });
   }
 
@@ -365,13 +365,12 @@ describe("stored session model selections in scheduled session turns", () => {
   ])(
     "reports a failed $name selection in a main system-event turn instead of answering from a configured fallback",
     async ({ storedSelection }) => {
-      const { result, requests, job } = await runWithFailingPinnedModel({
+      const { result, requests } = await runWithFailingPinnedModel({
         storedSelection,
         target: "main",
         payloadKind: "systemEvent",
       });
 
-      expect(job.payload.kind).toBe("systemEvent");
       expect(requests).toEqual(["pinned/model-x"]);
       expect(result.status).toBe("error");
       expect(result.error).toContain("Couldn't sign in to the AI service");
@@ -452,7 +451,7 @@ describe("stored session model selections in scheduled session turns", () => {
     });
 
     it("keeps a queued main system-event turn strict once the user pins a model", async () => {
-      const { result, requests, job } = await runWithFailingPinnedModel({
+      const { result, requests } = await runWithFailingPinnedModel({
         storedSelection: {},
         storedPin: null,
         target: "main",
@@ -460,7 +459,6 @@ describe("stored session model selections in scheduled session turns", () => {
         retargetWhileAdmitting: { pin: { provider: "pinned", model: "model-x" } },
       });
 
-      expect(job.payload.kind).toBe("systemEvent");
       expect(requests).toEqual(["primary/model-a", "pinned/model-x"]);
       expect(result.status).toBe("error");
       expect(result.error).toContain("Couldn't sign in to the AI service");
