@@ -89,14 +89,15 @@ describe("plugin native subagent admission", () => {
     expect(native).not.toHaveProperty("list");
   });
 
-  it.each([
-    ["spawn", (native: NativeSubagentRuntime) => native.spawn(request)],
-    ["list", (native: NativeSubagentRuntime) => expectDefined(native.list, "native list")()],
-  ] as const)(
+  it.each<[string, (native: NativeSubagentRuntime) => () => Promise<unknown>]>([
+    ["spawn", (native) => () => native.spawn(request)],
+    ["list", (native) => expectDefined(native.list, "native list")],
+  ])(
     "rechecks the actual registry owner after asynchronous preparation (%s)",
-    async (_operation, invoke) => {
+    async (_operation, bind) => {
       const { builder, record, backend } = fixture();
       const api = builder.createApi(record, { config: {} });
+      const invoke = bind(expectDefined(api.runtime.subagent.native, "native runtime"));
       const entered = createDeferred();
       const resume = createDeferred<NativeSubagentRuntime>();
       const pending = withNativeSubagentRequest(
@@ -104,9 +105,10 @@ describe("plugin native subagent admission", () => {
           entered.resolve();
           return resume.promise;
         },
-        () => invoke(api.runtime.subagent.native!),
+        () => invoke(),
       );
-      await entered.promise;
+      // A call rejected before preparation must fail here, not wait for preparation.
+      await Promise.race([entered.promise, pending]);
       revokePluginRecord(builder.registry, record);
       resume.resolve(backend);
       await expect(pending).rejects.toThrow("no longer active");
