@@ -7,6 +7,7 @@ import {
   createOwnershipSubagent,
 } from "./registry-ownership.test-support.js";
 import { createRuntimeTestRegistry } from "./registry-runtime.test-helpers.js";
+import { getPluginRuntimeGatewayRequestScope } from "./runtime/gateway-request-scope.js";
 import { createPluginRuntime } from "./runtime/index.js";
 import {
   nativeSubagentRuntime,
@@ -71,12 +72,19 @@ describe("plugin native subagent admission", () => {
     const { builder, record, backend } = fixture();
     const api = builder.createApi(record, { config: {} });
     const list = expectDefined(api.runtime.subagent.native?.list, "native list");
+    const scopedPluginIds: Array<string | undefined> = [];
+    backend.list.mockImplementation(async () => {
+      scopedPluginIds.push(getPluginRuntimeGatewayRequestScope()?.pluginId);
+      return [listed];
+    });
     const create = vi.fn(() => backend);
     await withNativeSubagentRequest(create, async () => {
       await expect(list({ status: "running" })).resolves.toEqual([listed]);
     });
     expect(create).toHaveBeenCalledWith(expect.objectContaining({ pluginId: "controller" }));
     expect(backend.list).toHaveBeenCalledWith({ status: "running" });
+    // The host listing runs under the calling plugin's runtime scope.
+    expect(scopedPluginIds).toEqual(["controller"]);
   });
 
   it("omits listing when the host native runtime has none", () => {
@@ -111,7 +119,7 @@ describe("plugin native subagent admission", () => {
       await Promise.race([entered.promise, pending]);
       revokePluginRecord(builder.registry, record);
       resume.resolve(backend);
-      await expect(pending).rejects.toThrow("no longer active");
+      await expect(pending).rejects.toThrow('Plugin "controller" runtime is no longer active.');
       expect(backend.spawn).not.toHaveBeenCalled();
       expect(backend.list).not.toHaveBeenCalled();
     },
@@ -130,7 +138,7 @@ describe("plugin native subagent admission", () => {
       },
     );
     resume.resolve(backend);
-    await expect(pending).rejects.toThrow("no longer active");
+    await expect(pending).rejects.toThrow("Native subagent request is no longer active.");
     await expect(list()).rejects.toThrow("requester-bound invocation");
     expect(backend.list).not.toHaveBeenCalled();
   });
