@@ -84,8 +84,8 @@ describe("plugin native subagent admission", () => {
       collect: vi.fn<NativeSubagentRuntime["collect"]>(),
     });
     const native = builder.createApi(record, { config: {} }).runtime.subagent.native;
-    expect(native?.spawn).toBeTypeOf("function");
-    expect(native?.list).toBeUndefined();
+    expect(native).toHaveProperty("spawn");
+    expect(native).not.toHaveProperty("list");
   });
 
   it("rechecks the actual registry owner after asynchronous preparation", async () => {
