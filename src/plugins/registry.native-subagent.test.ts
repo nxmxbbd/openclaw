@@ -10,6 +10,7 @@ import { createRuntimeTestRegistry } from "./registry-runtime.test-helpers.js";
 import { createPluginRuntime } from "./runtime/index.js";
 import {
   nativeSubagentRuntime,
+  type NativeSubagentRuntimeGuard,
   withNativeSubagentRequest,
 } from "./runtime/native-subagent-context.js";
 import type { NativeSubagentRuntime } from "./runtime/types-native-subagent.js";
@@ -88,22 +89,64 @@ describe("plugin native subagent admission", () => {
     expect(native).not.toHaveProperty("list");
   });
 
-  it("rechecks the actual registry owner after asynchronous preparation", async () => {
+  it.each([
+    ["spawn", (native: NativeSubagentRuntime) => native.spawn(request)],
+    ["list", (native: NativeSubagentRuntime) => expectDefined(native.list, "native list")()],
+  ] as const)(
+    "rechecks the actual registry owner after asynchronous preparation (%s)",
+    async (_operation, invoke) => {
+      const { builder, record, backend } = fixture();
+      const api = builder.createApi(record, { config: {} });
+      const entered = createDeferred();
+      const resume = createDeferred<NativeSubagentRuntime>();
+      const pending = withNativeSubagentRequest(
+        () => {
+          entered.resolve();
+          return resume.promise;
+        },
+        () => invoke(api.runtime.subagent.native!),
+      );
+      await entered.promise;
+      revokePluginRecord(builder.registry, record);
+      resume.resolve(backend);
+      await expect(pending).rejects.toThrow("no longer active");
+      expect(backend.spawn).not.toHaveBeenCalled();
+      expect(backend.list).not.toHaveBeenCalled();
+    },
+  );
+
+  it("refuses listing once the requester invocation has ended", async () => {
     const { builder, record, backend } = fixture();
     const api = builder.createApi(record, { config: {} });
-    const entered = createDeferred();
+    const list = expectDefined(api.runtime.subagent.native?.list, "native list");
     const resume = createDeferred<NativeSubagentRuntime>();
-    const pending = withNativeSubagentRequest(
-      () => {
-        entered.resolve();
-        return resume.promise;
+    let pending: Promise<unknown> | undefined;
+    await withNativeSubagentRequest(
+      () => resume.promise,
+      async () => {
+        pending = list();
       },
-      () => api.runtime.subagent.native!.spawn(request),
     );
-    await entered.promise;
-    revokePluginRecord(builder.registry, record);
     resume.resolve(backend);
     await expect(pending).rejects.toThrow("no longer active");
-    expect(backend.spawn).not.toHaveBeenCalled();
+    await expect(list()).rejects.toThrow("requester-bound invocation");
+    expect(backend.list).not.toHaveBeenCalled();
+  });
+
+  it("gives another plugin its own native runtime in the same invocation", async () => {
+    const { builder, record, backend } = fixture();
+    const controller = builder.createApi(record, { config: {} }).runtime.subagent.native;
+    const observer = builder.createApi(createOwnershipRecord("observer"), { config: {} }).runtime
+      .subagent.native;
+    const observerBackend = { ...backend, list: vi.fn(async () => []) };
+    const create = vi.fn((guard: NativeSubagentRuntimeGuard) =>
+      guard.pluginId === "controller" ? backend : observerBackend,
+    );
+    await withNativeSubagentRequest(create, async () => {
+      await expect(expectDefined(controller?.list, "controller list")()).resolves.toEqual([listed]);
+      await expect(expectDefined(observer?.list, "observer list")()).resolves.toEqual([]);
+    });
+    expect(create.mock.calls.map(([guard]) => guard.pluginId)).toEqual(["controller", "observer"]);
+    expect(backend.list).toHaveBeenCalledTimes(1);
   });
 });
