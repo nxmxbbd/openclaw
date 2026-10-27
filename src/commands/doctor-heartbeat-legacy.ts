@@ -20,6 +20,7 @@ import {
   migrateHeartbeatVisibility,
   selectLegacyHeartbeatVisibility,
 } from "./doctor/shared/channel-legacy-config-migrate.js";
+import { visitAgentEntries } from "./doctor/shared/legacy-config-record-shared.js";
 
 export type HeartbeatConfig = LegacyHeartbeatConfig;
 
@@ -206,12 +207,14 @@ const LegacyHeartbeatSchema = z
   })
   .optional();
 
+const LegacyHeartbeatDefaultsSchema = LegacyHeartbeatSchema.unwrap().safeExtend({
+  agentId: z.string().trim().min(1).optional(),
+});
+
 export function validateLegacyHeartbeatConfig(cfg: OpenClawConfig): void {
   const defaults = cfg.agents?.defaults?.heartbeat;
   if (defaults !== undefined) {
-    LegacyHeartbeatSchema.unwrap()
-      .safeExtend({ agentId: z.string().trim().min(1).optional() })
-      .parse(defaults);
+    LegacyHeartbeatDefaultsSchema.parse(defaults);
   }
   const agentIds = new Set(listAgentIds(cfg));
   if (defaults?.agentId && !agentIds.has(normalizeAgentId(defaults.agentId))) {
@@ -235,6 +238,25 @@ export function validateLegacyHeartbeatConfig(cfg: OpenClawConfig): void {
       }
     }
   }
+}
+
+/** Names invalid legacy heartbeat values by config path, for Doctor to report while it keeps them. */
+export function describeInvalidLegacyHeartbeatConfig(cfg: OpenClawConfig): string[] {
+  const lines: string[] = [];
+  const describe = (schema: z.ZodType, heartbeat: unknown, path: string) => {
+    const result = schema.safeParse(heartbeat);
+    for (const issue of result.success ? [] : result.error.issues) {
+      lines.push(`${[path, ...issue.path.map(String)].join(".")}: ${issue.message}`);
+    }
+  };
+  const defaults = cfg.agents?.defaults?.heartbeat;
+  if (defaults !== undefined) {
+    describe(LegacyHeartbeatDefaultsSchema, defaults, "agents.defaults.heartbeat");
+  }
+  visitAgentEntries(cfg, (entry, path) =>
+    describe(LegacyHeartbeatSchema, entry.heartbeat, `${path}.heartbeat`),
+  );
+  return lines;
 }
 
 /** Validation-only candidate; durable retirement must finish before this config is written. */

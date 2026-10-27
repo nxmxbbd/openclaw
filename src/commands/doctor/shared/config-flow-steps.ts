@@ -134,11 +134,23 @@ export async function applyRetiredConfigStep(params: {
     return state;
   }
   if (params.shouldRepair && !params.preflight?.cronStoreSelectionUnresolved) {
-    const { tryProjectRetiredHeartbeatConfig } = await import("../../doctor-heartbeat-legacy.js");
+    const { describeInvalidLegacyHeartbeatConfig, tryProjectRetiredHeartbeatConfig } =
+      await import("../../doctor-heartbeat-legacy.js");
     const { retireHeartbeatWithDoctor } = await import("../../doctor-heartbeat-retirement.js");
-    const retiredConfig = tryProjectRetiredHeartbeatConfig(state.candidate)
-      ? await retireHeartbeatWithDoctor(state.candidate)
-      : undefined;
+    const projected = tryProjectRetiredHeartbeatConfig(state.candidate);
+    const retiredConfig = projected ? await retireHeartbeatWithDoctor(state.candidate) : undefined;
+    // The config-write refusal only names heartbeat as an unknown key; name the values to fix.
+    const invalidHeartbeat = projected ? [] : describeInvalidLegacyHeartbeatConfig(state.candidate);
+    if (invalidHeartbeat.length > 0) {
+      note(
+        [
+          "Heartbeat settings were kept unchanged. Doctor converts them to automations once these values are valid:",
+          ...invalidHeartbeat.map((line) => `- ${line}`),
+          `Fix the value(s) above, then rerun "${params.doctorFixCommand}".`,
+        ].join("\n"),
+        "Doctor warnings",
+      );
+    }
     if (retiredConfig && JSON.stringify(retiredConfig) !== JSON.stringify(state.candidate)) {
       const mutation = {
         config: retiredConfig,
