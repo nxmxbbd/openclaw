@@ -343,11 +343,22 @@ describe("HEARTBEAT.md cron scratch migration", () => {
       const scratch = readCronJobScratchState(storePath, monitor.id);
 
       await expect(collectHeartbeatScratchMigrationFindings(retired)).resolves.toEqual([
-        expect.objectContaining({ target: "main", severity: "warning" }),
+        expect.objectContaining({
+          target: "main",
+          severity: "warning",
+          requirement: "legacy-heartbeat-file",
+        }),
       ]);
       await expect(
         assertHeartbeatScratchMigrationUnambiguous(retired, process.env),
       ).resolves.toBeUndefined();
+      await expect(migrate(retired)).resolves.toEqual({
+        changes: [],
+        warnings: [],
+        notices: [
+          expect.stringMatching(/^Agent "main" has completed cutover; .+ \(unreadable: .+\)\.$/),
+        ],
+      });
       await expect(retireHeartbeatWithDoctor(retired)).resolves.toEqual(retired);
 
       await expectFile(fixture.heartbeatPath, "Notes kept outside the workspace\n");
