@@ -139,8 +139,28 @@ async function readHeartbeatSource(
   };
 }
 
-function completedHeartbeatSourceWarning(agentId: string): string {
-  return `Agent "${agentId}" has completed cutover; its HEARTBEAT.md was retained without changing the operator-owned automation.`;
+function completedHeartbeatSourceWarning(agentId: string, unreadable?: string): string {
+  return `Agent "${agentId}" has completed cutover; its HEARTBEAT.md was retained without changing the operator-owned automation${unreadable ? ` (unreadable: ${unreadable})` : ""}.`;
+}
+
+function readHeartbeatReceipt(storePath: string, agentId: string, env: NodeJS.ProcessEnv) {
+  return withExistingOpenClawStateDatabaseReadOnly(
+    ({ db }) => {
+      const storeKey = resolveCronStoreKeyInDatabase(db, storePath, env);
+      return readDefaultProactiveJobReceiptInDatabase(db, storeKey, agentId);
+    },
+    { env },
+  );
+}
+
+/** Completed cutover never imports, claims, or removes the file, so its source checks cannot block. */
+function hasCompletedCutover(storePath: string, agentId: string, env: NodeJS.ProcessEnv) {
+  try {
+    return readHeartbeatReceipt(storePath, agentId, env)?.phase === "complete";
+  } catch {
+    // An unresolved partition or unreadable state cannot prove completion.
+    return false;
+  }
 }
 
 function shouldInspectHeartbeatScratchSource(
@@ -452,24 +472,29 @@ export async function collectHeartbeatScratchMigrationFindings(
       if (shouldImport) {
         validateHeartbeatTasks(analyzeLegacyHeartbeatTasks(source.content));
       }
-      findings.push({
-        ...MIGRATION_FINDING_DEFAULTS,
-        target: agentId,
-        path: heartbeatPath,
-        requirement: "legacy-heartbeat-file",
-        message: `Agent "${agentId}" still stores heartbeat instructions in HEARTBEAT.md.`,
-      });
     } catch (error) {
       const deferred = error instanceof CronStoreSelectionRequiredError;
-      findings.push({
-        ...MIGRATION_FINDING_DEFAULTS,
-        target: agentId,
-        path: heartbeatPath,
-        requirement: deferred ? "heartbeat-migration-deferred" : "heartbeat-file-migration-blocked",
-        severity: deferred ? "warning" : "error",
-        message: `Agent "${agentId}" HEARTBEAT.md cannot be migrated: ${errorMessage(error)}`,
-      });
+      if (deferred || !hasCompletedCutover(storePath, agentId, env)) {
+        findings.push({
+          ...MIGRATION_FINDING_DEFAULTS,
+          target: agentId,
+          path: heartbeatPath,
+          requirement: deferred
+            ? "heartbeat-migration-deferred"
+            : "heartbeat-file-migration-blocked",
+          severity: deferred ? "warning" : "error",
+          message: `Agent "${agentId}" HEARTBEAT.md cannot be migrated: ${errorMessage(error)}`,
+        });
+        continue;
+      }
     }
+    findings.push({
+      ...MIGRATION_FINDING_DEFAULTS,
+      target: agentId,
+      path: heartbeatPath,
+      requirement: "legacy-heartbeat-file",
+      message: `Agent "${agentId}" still stores heartbeat instructions in HEARTBEAT.md.`,
+    });
   }
   return findings;
 }
@@ -531,15 +556,7 @@ export async function maybeMigrateHeartbeatFilesToScratch(params: {
   // Completed ownership survives deletion of the automation and its monitor entry.
   for (const agentId of new Set([...monitors.keys(), ...listAgentIds(params.cfg)])) {
     const monitor = monitors.get(agentId);
-    const receipt = withExistingOpenClawStateDatabaseReadOnly(
-      ({ db }) =>
-        readDefaultProactiveJobReceiptInDatabase(
-          db,
-          resolveCronStoreKeyInDatabase(db, storePath, env),
-          agentId,
-        ),
-      { env },
-    );
+    const receipt = readHeartbeatReceipt(storePath, agentId, env);
     if (!shouldInspectHeartbeatScratchSource(Boolean(monitor), receipt)) {
       continue;
     }
@@ -547,6 +564,10 @@ export async function maybeMigrateHeartbeatFilesToScratch(params: {
     try {
       source = await readHeartbeatSource(params.cfg, agentId, { recoverClaims: true, env });
     } catch (error) {
+      if (receipt?.phase === "complete") {
+        notices.push(completedHeartbeatSourceWarning(agentId, errorMessage(error)));
+        continue;
+      }
       warnings.push(`Agent "${agentId}" HEARTBEAT.md was not migrated: ${errorMessage(error)}`);
       continue;
     }
