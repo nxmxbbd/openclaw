@@ -41,6 +41,7 @@ import {
 import {
   resolveDoctorHeartbeatReceiptJob,
   selectDoctorHeartbeatMonitor,
+  tryListDoctorHeartbeatConvertingOwners,
 } from "./doctor-heartbeat-monitors.js";
 import { noteDoctorMigrationResult } from "./doctor-migration-notes.js";
 import { analyzeLegacyHeartbeatTasks, validateHeartbeatTasks } from "./heartbeat-task-legacy.js";
@@ -434,11 +435,9 @@ export async function collectHeartbeatScratchMigrationFindings(
   } as const;
   const findings: HealthFinding[] = [];
   const storePath = resolveCronJobsStorePathFromConfig(cfg, env);
-  // Receipt-only owners still owe their import, and repair inspects them too.
-  const pendingOwners = listAgentIds(cfg).filter(
-    (agentId) => tryReadHeartbeatReceiptPhase(storePath, agentId, env) === "pending",
-  );
-  for (const agentId of new Set([...resolveHeartbeatFileAgentIds(cfg), ...pendingOwners])) {
+  // Repair also converts receipt and legacy-row owners that have no heartbeat settings.
+  const convertingOwners = tryListDoctorHeartbeatConvertingOwners(cfg, storePath, env);
+  for (const agentId of new Set([...resolveHeartbeatFileAgentIds(cfg), ...convertingOwners])) {
     const heartbeatPath = path.join(
       resolveAgentWorkspaceDir(cfg, agentId, env),
       LEGACY_HEARTBEAT_FILENAME,

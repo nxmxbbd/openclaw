@@ -1,9 +1,13 @@
 import { listAgentIds, tryResolveAmbientOwnerAgentId } from "../agents/agent-scope-config.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { tryResolveCronJobEffectiveAgentId } from "../cron/agent-id.js";
+import { readDefaultProactiveJobReceiptInDatabase } from "../cron/proactive-job-receipt.js";
 import type { DefaultProactiveJobReceipt } from "../cron/proactive-job-receipt.types.js";
+import { resolveCronStoreKeyInDatabase } from "../cron/store/paths.js";
+import { loadCronRows } from "../cron/store/row-codec.js";
 import type { CronStoredJob } from "../cron/types.js";
-import type { DoctorCronJob } from "./doctor-heartbeat-jobs.js";
+import { withExistingOpenClawStateDatabaseReadOnly } from "../state/openclaw-state-db-readonly.js";
+import { type DoctorCronJob, decodeDoctorHeartbeatJobRows } from "./doctor-heartbeat-jobs.js";
 import { resolveLegacyHeartbeatAgents } from "./doctor-heartbeat-legacy.js";
 import { isHeartbeatTaskCronJob } from "./doctor-heartbeat-task-identity.js";
 
@@ -118,4 +122,29 @@ export function planDoctorHeartbeatMonitors(
     }
   }
   return { agentIds, enrolledAgentIds, receipts };
+}
+
+/** Owners repair still converts; on a plan error this lists none and repair reports it. */
+export function tryListDoctorHeartbeatConvertingOwners(
+  cfg: OpenClawConfig,
+  storePath: string,
+  env: NodeJS.ProcessEnv,
+): string[] {
+  try {
+    const owners = withExistingOpenClawStateDatabaseReadOnly(
+      ({ db }) => {
+        const storeKey = resolveCronStoreKeyInDatabase(db, storePath, env);
+        const { agentIds, receipts } = planDoctorHeartbeatMonitors(
+          cfg,
+          decodeDoctorHeartbeatJobRows(loadCronRows(db, storeKey)),
+          (agentId) => readDefaultProactiveJobReceiptInDatabase(db, storeKey, agentId),
+        );
+        return [...agentIds].filter((agentId) => receipts.get(agentId)?.phase !== "complete");
+      },
+      { env },
+    );
+    return owners ?? [];
+  } catch {
+    return [];
+  }
 }

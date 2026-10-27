@@ -191,8 +191,8 @@ Package updates using candidate admission also inspect the original heartbeat
 files. Unsafe or unreadable sources that still need conversion refuse the update
 before the running Gateway stops, including when an older updater omits workspace
 files from its private rehearsal. Differing scratch or a file retained after
-completed conversion, even an unreadable one, does not block admission: Doctor
-preserves the originals and reports them for review.
+completed conversion, even an unsafe or unreadable one, does not block admission:
+Doctor preserves the originals and reports them for review.
 Unrelated invalid fields, unsupported legacy shapes, and heartbeat repairs in
 read-only, future-written, or included configuration still require operator
 repair before admission.
