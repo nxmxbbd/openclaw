@@ -326,6 +326,75 @@ describe("HEARTBEAT.md cron scratch migration", () => {
     },
   );
 
+  it.each(["escaping symlink", "extra hard link"])(
+    "retains an unreadable %s HEARTBEAT.md recreated after completed cutover",
+    async (shape) => {
+      const fixture = await createFixture("# Checklist\n- check the queue\n");
+      const retired = await retireHeartbeatWithDoctor(fixture.cfg);
+      const { monitor, storePath } = await loadMonitor();
+      const completedReceipt = receipt(storePath);
+      expect(completedReceipt).toMatchObject({ jobId: monitor.id, phase: "complete" });
+      const outside = path.join(fixture.root, "outside.md");
+      await fs.writeFile(outside, "Notes kept outside the workspace\n");
+      await (shape === "escaping symlink"
+        ? fs.symlink(outside, fixture.heartbeatPath)
+        : fs.link(outside, fixture.heartbeatPath));
+      const jobs = (await loadCronJobsStore(storePath)).jobs;
+      const scratch = readCronJobScratchState(storePath, monitor.id);
+
+      await expect(collectHeartbeatScratchMigrationFindings(retired)).resolves.toEqual([
+        expect.objectContaining({ target: "main", severity: "warning" }),
+      ]);
+      await expect(
+        assertHeartbeatScratchMigrationUnambiguous(retired, process.env),
+      ).resolves.toBeUndefined();
+      await expect(retireHeartbeatWithDoctor(retired)).resolves.toEqual(retired);
+
+      await expectFile(fixture.heartbeatPath, "Notes kept outside the workspace\n");
+      expect((await fs.lstat(fixture.heartbeatPath)).isSymbolicLink()).toBe(
+        shape === "escaping symlink",
+      );
+      expect((await loadCronJobsStore(storePath)).jobs).toEqual(jobs);
+      expect(readCronJobScratchState(storePath, monitor.id)).toEqual(scratch);
+      expect(receipt(storePath)).toEqual(completedReceipt);
+    },
+  );
+
+  it("still refuses an unreadable HEARTBEAT.md for a pending owner beside a completed one", async () => {
+    const fixture = await createFixture();
+    await retireHeartbeatWithDoctor(fixture.cfg);
+    const storePath = resolveCronJobsStorePathFromConfig(fixture.cfg);
+    expect(receipt(storePath, "main")).toMatchObject({ phase: "complete" });
+    const cfg = {
+      agents: {
+        defaults: { heartbeat: { every: "30m" } },
+        entries: {
+          main: { workspace: fixture.workspace },
+          ollama: { workspace: fixture.workspace },
+        },
+      },
+    } as OpenClawConfig;
+    const outside = path.join(fixture.root, "outside.md");
+    await fs.writeFile(outside, "outside\n");
+    await fs.symlink(outside, fixture.heartbeatPath);
+
+    const findings = await collectHeartbeatScratchMigrationFindings(cfg);
+    expect(findings).toContainEqual(
+      expect.objectContaining({
+        target: "ollama",
+        severity: "error",
+        requirement: "heartbeat-file-migration-blocked",
+      }),
+    );
+    await expect(assertHeartbeatScratchMigrationUnambiguous(cfg, process.env)).rejects.toThrow(
+      "escapes the agent workspace",
+    );
+    await expect(retireHeartbeatWithDoctor(cfg)).rejects.toThrow("escapes the agent workspace");
+    expect(receipt(storePath, "ollama")?.phase).not.toBe("complete");
+    expect((await fs.lstat(fixture.heartbeatPath)).isSymbolicLink()).toBe(true);
+    await expectFile(outside, "outside\n");
+  });
+
   it("imports shared scratch and tasks into disabled owners without re-enabling them", async () => {
     const source =
       "# Checklist\n\ntasks:\n  - name: inbox\n    interval: 1h\n    prompt: Check inbox\n";
