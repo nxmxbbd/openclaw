@@ -128,7 +128,7 @@ export function migrateHeartbeatPrompt(prompt: string): string {
   return prompt.replace(/(?<![\p{L}\p{N}_])HEARTBEAT_OK(?![\p{L}\p{N}_])/gu, "NO_REPLY");
 }
 
-export const LegacyHeartbeatSchema = z
+const LegacyHeartbeatSchema = z
   .object({
     every: z.string().optional(),
     activeHours: z

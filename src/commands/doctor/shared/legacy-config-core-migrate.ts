@@ -6,7 +6,6 @@ import { copyConfigResolutionFactsThroughRewrite } from "../../../config/resolut
 import type { OpenClawConfig } from "../../../config/types.openclaw.js";
 import { runPluginSetupConfigMigrations } from "../../../plugins/setup-registry.js";
 import { migrateLegacyCommandOwners } from "../../doctor-command-owner.js";
-import { LegacyHeartbeatSchema } from "../../doctor-heartbeat-legacy.js";
 import { applyChannelDoctorCompatibilityMigrations } from "./channel-legacy-config-migrate.js";
 import type { LegacyCodexModelIdentity } from "./codex-route-model-ref.js";
 import { pruneBindingsForMissingAgents } from "./legacy-config-binding-repair.js";
@@ -29,23 +28,6 @@ import {
   migrateLegacyXSearchConfig,
 } from "./legacy-web-tools-migrate.js";
 import { migrateReservedMcpServerNames } from "./reserved-mcp-server-name-migrate.js";
-
-function repairInvalidHeartbeatActiveHours(cfg: OpenClawConfig, changes: string[]): void {
-  const repairHeartbeat = (heartbeat: unknown, path: string) => {
-    if (
-      isRecord(heartbeat) &&
-      Object.hasOwn(heartbeat, "activeHours") &&
-      !LegacyHeartbeatSchema.safeParse({ activeHours: heartbeat.activeHours }).success
-    ) {
-      delete heartbeat.activeHours;
-      changes.push(
-        `Removed invalid ${path}.activeHours; heartbeats will use unrestricted hours until it is reconfigured.`,
-      );
-    }
-  };
-  repairHeartbeat(cfg.agents?.defaults?.heartbeat, "agents.defaults.heartbeat");
-  visitAgentEntries(cfg, (agent, path) => repairHeartbeat(agent.heartbeat, `${path}.heartbeat`));
-}
 
 function repairNullAgentWorkspaces(cfg: OpenClawConfig, changes: string[]): void {
   let repaired = 0;
@@ -121,7 +103,6 @@ export function normalizeCompatibilityConfigValues(
     changes.push(...secrets.changes);
   }
   normalizeLegacyOpenAICodexModelsAddMetadata(next, changes);
-  repairInvalidHeartbeatActiveHours(next, changes);
   repairNullAgentWorkspaces(next, changes);
   next = migrateLegacyCommandOwners(next, changes);
   next = pruneBindingsForMissingAgents(next, changes);
