@@ -14,6 +14,7 @@ import {
   saveCronJobsStore,
 } from "../cron/store.js";
 import { resolveCronStoreKeyInDatabase } from "../cron/store/paths.js";
+import type { CronStoredJob } from "../cron/types.js";
 import { withExistingOpenClawStateDatabaseReadOnly } from "../state/openclaw-state-db-readonly.js";
 import {
   closeOpenClawStateDatabaseAsync,
@@ -30,6 +31,7 @@ import {
   maybeMigrateHeartbeatFilesToScratch,
 } from "./doctor-heartbeat-scratch-migration.js";
 import { assertHeartbeatScratchMigrationUnambiguous } from "./doctor-heartbeat-scratch-preflight.js";
+import { heartbeatTaskDeclarationKey } from "./doctor-heartbeat-task-identity.js";
 import { maybeMigrateHeartbeatTasksToCron } from "./doctor-heartbeat-task-migration.js";
 
 const tempDirs: string[] = [];
@@ -371,7 +373,7 @@ describe("HEARTBEAT.md cron scratch migration", () => {
     },
   );
 
-  it.each(["configured", "receipt-only"])(
+  it.each(["configured", "receipt-only", "task-row"])(
     "still refuses an unreadable HEARTBEAT.md for a %s pending owner beside a completed one",
     async (pendingOwner) => {
       const fixture = await createFixture();
@@ -383,6 +385,25 @@ describe("HEARTBEAT.md cron scratch migration", () => {
         const entries = { main: { workspace }, ollama: { workspace, heartbeat: { every: "30m" } } };
         await ensureHeartbeatMonitorJobs({ agents: { entries } } as OpenClawConfig, storePath);
         expect(receipt(storePath, "ollama")).toMatchObject({ phase: "pending" });
+      }
+      if (pendingOwner === "task-row") {
+        const task: CronStoredJob = {
+          id: "ollama-inbox",
+          agentId: "ollama",
+          name: "inbox",
+          enabled: true,
+          createdAtMs: 10,
+          updatedAtMs: 20,
+          declarationKey: heartbeatTaskDeclarationKey("ollama", "inbox"),
+          payload: { kind: "systemEvent", text: "Check the inbox", toolsAllow: ["read"] },
+          sessionTarget: "main",
+          wakeMode: "next-heartbeat",
+          schedule: { kind: "every", everyMs: 3_600_000, anchorMs: 10 },
+          state: {},
+        };
+        const store = await loadCronJobsStore(storePath);
+        await saveCronJobsStore(storePath, { ...store, jobs: [...store.jobs, task] });
+        expect(receipt(storePath, "ollama")).toBeUndefined();
       }
       const cfg = {
         agents: {
