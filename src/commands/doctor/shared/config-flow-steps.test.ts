@@ -205,6 +205,61 @@ describe("doctor config flow steps", () => {
   });
 
   it.each([
+    {
+      name: "a keyed agent entry",
+      agents: {
+        defaults: { heartbeat: { every: "30m", activeHours: { start: "08:00", end: "20:00" } } },
+        entries: { night: { heartbeat: { activeHours: { start: "22:00", end: "6:00" } } } },
+      },
+      lines: [
+        '- agents.entries.night.heartbeat.activeHours.end: invalid time (use "HH:MM" 24h format)',
+      ],
+    },
+    {
+      name: "a legacy agent list entry",
+      agents: {
+        list: [{ id: "main" }, { id: "night", heartbeat: { activeHours: { end: "6:00" } } }],
+      },
+      lines: ['- agents.list[1].heartbeat.activeHours.end: invalid time (use "HH:MM" 24h format)'],
+    },
+    {
+      name: "the agent defaults",
+      agents: {
+        defaults: { heartbeat: { every: "soon", activeHours: { start: "9:00", end: "17:00" } } },
+      },
+      lines: [
+        "- agents.defaults.heartbeat.every: invalid duration (use ms, s, m, h)",
+        '- agents.defaults.heartbeat.activeHours.start: invalid time (use "HH:MM" 24h format)',
+      ],
+    },
+  ])("names invalid heartbeat values in $name that Doctor keeps", async ({ agents, lines }) => {
+    const candidate = { agents } as unknown as OpenClawConfig;
+    const original = structuredClone(candidate);
+    stripUnknownConfigKeysMock.mockReturnValueOnce({ config: candidate, removed: [] });
+    const changes: string[] = [];
+
+    const state = await applyRetiredConfigStep({
+      state: mutationState(candidate),
+      shouldRepair: true,
+      doctorFixCommand: "openclaw doctor --fix",
+      sourceConfig: candidate,
+      emitChanges: (changeLines) => changes.push(...changeLines),
+    });
+
+    expect(changes).toStrictEqual([]);
+    expect(state.candidate).toStrictEqual(original);
+    expect(noteMock).toHaveBeenCalledTimes(1);
+    expect(noteMock).toHaveBeenCalledWith(
+      [
+        "Heartbeat settings were kept unchanged. Doctor converts them to automations once these values are valid:",
+        ...lines,
+        'Fix the value(s) above, then rerun "openclaw doctor --fix".',
+      ].join("\n"),
+      "Doctor warnings",
+    );
+  });
+
+  it.each([
     [
       "openai:default",
       { key: "sk-test" },
