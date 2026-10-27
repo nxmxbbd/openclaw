@@ -360,40 +360,49 @@ describe("HEARTBEAT.md cron scratch migration", () => {
     },
   );
 
-  it("still refuses an unreadable HEARTBEAT.md for a pending owner beside a completed one", async () => {
-    const fixture = await createFixture();
-    await retireHeartbeatWithDoctor(fixture.cfg);
-    const storePath = resolveCronJobsStorePathFromConfig(fixture.cfg);
-    expect(receipt(storePath, "main")).toMatchObject({ phase: "complete" });
-    const cfg = {
-      agents: {
-        defaults: { heartbeat: { every: "30m" } },
-        entries: {
-          main: { workspace: fixture.workspace },
-          ollama: { workspace: fixture.workspace },
+  it.each(["configured", "receipt-only"])(
+    "still refuses an unreadable HEARTBEAT.md for a %s pending owner beside a completed one",
+    async (pendingOwner) => {
+      const fixture = await createFixture();
+      await retireHeartbeatWithDoctor(fixture.cfg);
+      const storePath = resolveCronJobsStorePathFromConfig(fixture.cfg);
+      expect(receipt(storePath, "main")).toMatchObject({ phase: "complete" });
+      const workspace = fixture.workspace;
+      if (pendingOwner === "receipt-only") {
+        const entries = { main: { workspace }, ollama: { workspace, heartbeat: { every: "30m" } } };
+        await ensureHeartbeatMonitorJobs({ agents: { entries } } as OpenClawConfig, storePath);
+        expect(receipt(storePath, "ollama")).toMatchObject({ phase: "pending" });
+      }
+      const cfg = {
+        agents: {
+          defaults:
+            pendingOwner === "configured"
+              ? { heartbeat: { every: "30m" } }
+              : { systemAgent: { agentId: "main" } },
+          entries: { main: { workspace }, ollama: { workspace } },
         },
-      },
-    } as OpenClawConfig;
-    const outside = path.join(fixture.root, "outside.md");
-    await fs.writeFile(outside, "outside\n");
-    await fs.symlink(outside, fixture.heartbeatPath);
+      } as OpenClawConfig;
+      const outside = path.join(fixture.root, "outside.md");
+      await fs.writeFile(outside, "outside\n");
+      await fs.symlink(outside, fixture.heartbeatPath);
 
-    const findings = await collectHeartbeatScratchMigrationFindings(cfg);
-    expect(findings).toContainEqual(
-      expect.objectContaining({
-        target: "ollama",
-        severity: "error",
-        requirement: "heartbeat-file-migration-blocked",
-      }),
-    );
-    await expect(assertHeartbeatScratchMigrationUnambiguous(cfg, process.env)).rejects.toThrow(
-      "escapes the agent workspace",
-    );
-    await expect(retireHeartbeatWithDoctor(cfg)).rejects.toThrow("escapes the agent workspace");
-    expect(receipt(storePath, "ollama")?.phase).not.toBe("complete");
-    expect((await fs.lstat(fixture.heartbeatPath)).isSymbolicLink()).toBe(true);
-    await expectFile(outside, "outside\n");
-  });
+      const findings = await collectHeartbeatScratchMigrationFindings(cfg);
+      expect(findings).toContainEqual(
+        expect.objectContaining({
+          target: "ollama",
+          severity: "error",
+          requirement: "heartbeat-file-migration-blocked",
+        }),
+      );
+      await expect(assertHeartbeatScratchMigrationUnambiguous(cfg, process.env)).rejects.toThrow(
+        "escapes the agent workspace",
+      );
+      await expect(retireHeartbeatWithDoctor(cfg)).rejects.toThrow("escapes the agent workspace");
+      expect(receipt(storePath, "ollama")?.phase).not.toBe("complete");
+      expect((await fs.lstat(fixture.heartbeatPath)).isSymbolicLink()).toBe(true);
+      await expectFile(outside, "outside\n");
+    },
+  );
 
   it("imports shared scratch and tasks into disabled owners without re-enabling them", async () => {
     const source =
