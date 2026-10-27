@@ -392,7 +392,7 @@ it(
           {
             id: " Ops ",
             workspace: null,
-            heartbeat: { every: "30m", activeHours: { start: "99:99", end: "17:00" } },
+            heartbeat: { every: "30m", activeHours: { start: "09:00", end: "17:00" } },
           },
         ],
       },
@@ -417,9 +417,34 @@ it(
       payload: { kind: "agentTurn", skipIfScratchEmpty: true },
       idleOnly: true,
     });
-    expect(migrated.jobs[0]?.activeHours).toBeUndefined();
+    expect(migrated.jobs[0]?.activeHours).toEqual({
+      start: "09:00",
+      end: "17:00",
+      timezone: "user",
+    });
     await expectSettled(configPath);
     expect(await loadCronJobsStore(storePath)).toEqual(migrated);
+  }),
+);
+
+it(
+  "retains malformed heartbeat hours through normal config-write refusal",
+  withHome(async (home) => {
+    const heartbeat = { every: "30m", activeHours: { start: "99:99", end: "17:00" } };
+    const configPath = await writeConfig(home, {
+      agents: { list: [{ id: " Ops ", workspace: null, heartbeat }] },
+    });
+    const original = await readText(configPath);
+    expect((await readConfigFileSnapshot()).valid).toBe(false);
+
+    await using ctx = await prepareDoctorContext(configPath);
+    await runInitialConfigWriteHealth(ctx);
+    expect(ctx.configWriteRefusal).toBe("validation");
+
+    expect(await readText(configPath)).toBe(original);
+    expect((await readConfigFileSnapshot()).valid).toBe(false);
+    const storePath = resolveCronJobsStorePathFromConfig(JSON.parse(original));
+    expect((await loadCronJobsStore(storePath)).jobs).toEqual([]);
   }),
 );
 
