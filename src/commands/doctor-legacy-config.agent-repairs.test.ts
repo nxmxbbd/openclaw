@@ -1,5 +1,4 @@
 import { describe, expect, it } from "vitest";
-import { projectRetiredHeartbeatConfig } from "./doctor-heartbeat-legacy.js";
 import { useDoctorLegacyConfigFixture } from "./doctor/shared/legacy-config-fixture.test-support.js";
 
 describe("legacy agent config repairs", () => {
@@ -30,38 +29,38 @@ describe("legacy agent config repairs", () => {
     },
   );
 
-  it("repairs heartbeat windows before projecting the retired config", async () => {
-    const { normalizeCompatibilityConfigValues } =
-      await import("./doctor/shared/legacy-config-core-migrate.js");
-    const { validateConfigObject } = await import("../config/validation.js");
-    const res = normalizeCompatibilityConfigValues({
-      agents: {
-        defaults: {
-          heartbeat: {
-            every: "30m",
-            activeHours: { start: "99:99", end: "17:00" },
-          },
+  it.each([
+    {
+      name: "malformed",
+      defaults: { start: "99:99", end: "17:00" },
+      agent: { start: "09:00", end: "not-a-time" },
+    },
+    {
+      name: "valid",
+      defaults: { start: "09:00", end: "24:00", timezone: "user" },
+      agent: { start: "22:00", end: "06:00" },
+    },
+  ])(
+    "preserves $name heartbeat hours for durable Doctor migration",
+    async ({ defaults, agent }) => {
+      const { normalizeCompatibilityConfigValues } =
+        await import("./doctor/shared/legacy-config-core-migrate.js");
+      const res = normalizeCompatibilityConfigValues({
+        agents: {
+          defaults: { heartbeat: { every: "30m", activeHours: defaults } },
+          entries: { ops: { heartbeat: { prompt: "Check alerts", activeHours: agent } } },
         },
-        entries: {
-          ops: {
-            heartbeat: {
-              prompt: "Check alerts",
-              activeHours: { start: "09:00", end: "not-a-time" },
-            },
-          },
-        },
-      },
-    });
+      });
 
-    expect(res.config.agents?.defaults?.heartbeat).toEqual({ every: "30m" });
-    expect(res.config.agents?.entries?.ops?.heartbeat).toEqual({ prompt: "Check alerts" });
-    expect(res.changes).toContain(
-      "Removed invalid agents.defaults.heartbeat.activeHours; heartbeats will use unrestricted hours until it is reconfigured.",
-    );
-    expect(res.changes).toContain(
-      "Removed invalid agents.entries.ops.heartbeat.activeHours; heartbeats will use unrestricted hours until it is reconfigured.",
-    );
-    expect(validateConfigObject(res.config).ok).toBe(false);
-    expect(validateConfigObject(projectRetiredHeartbeatConfig(res.config)).ok).toBe(true);
-  });
+      expect(res.config.agents?.defaults?.heartbeat).toEqual({
+        every: "30m",
+        activeHours: defaults,
+      });
+      expect(res.config.agents?.entries?.ops?.heartbeat).toEqual({
+        prompt: "Check alerts",
+        activeHours: agent,
+      });
+      expect(res.changes).toEqual([]);
+    },
+  );
 });
