@@ -216,11 +216,13 @@ describe("doctor config flow steps", () => {
       ],
     },
     {
-      name: "a legacy agent list entry",
+      name: "an agent id that needs quoting",
       agents: {
-        list: [{ id: "main" }, { id: "night", heartbeat: { activeHours: { end: "6:00" } } }],
+        entries: { "ops.night": { heartbeat: { activeHours: { end: "6:00" } } } },
       },
-      lines: ['- agents.list[1].heartbeat.activeHours.end: invalid time (use "HH:MM" 24h format)'],
+      lines: [
+        '- agents.entries["ops.night"].heartbeat.activeHours.end: invalid time (use "HH:MM" 24h format)',
+      ],
     },
     {
       name: "the agent defaults",
@@ -251,7 +253,7 @@ describe("doctor config flow steps", () => {
     expect(noteMock).toHaveBeenCalledTimes(1);
     expect(noteMock).toHaveBeenCalledWith(
       [
-        "Heartbeat settings were kept unchanged. Doctor converts them to automations once these values are valid:",
+        "Heartbeat settings were kept unchanged; Doctor cannot convert them to automations while these values are invalid:",
         ...lines,
         'Fix the value(s) above, then rerun "openclaw doctor --fix".',
       ].join("\n"),

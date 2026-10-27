@@ -144,8 +144,8 @@ export async function applyRetiredConfigStep(params: {
     if (invalidHeartbeat.length > 0) {
       note(
         [
-          "Heartbeat settings were kept unchanged. Doctor converts them to automations once these values are valid:",
-          ...invalidHeartbeat.map((line) => `- ${line}`),
+          "Heartbeat settings were kept unchanged; Doctor cannot convert them to automations while these values are invalid:",
+          ...formatConfigIssueLines(invalidHeartbeat, "-"),
           `Fix the value(s) above, then rerun "${params.doctorFixCommand}".`,
         ].join("\n"),
         "Doctor warnings",

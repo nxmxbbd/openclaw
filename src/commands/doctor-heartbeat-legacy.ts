@@ -3,6 +3,7 @@ import { normalizeOptionalString } from "@openclaw/normalization-core/string-coe
 import { z } from "zod";
 import {
   listAgentEntries,
+  listAgentEntriesWithSource,
   listAgentIds,
   resolveAgentEntry,
   tryResolveAmbientOwnerAgentId,
@@ -20,7 +21,6 @@ import {
   migrateHeartbeatVisibility,
   selectLegacyHeartbeatVisibility,
 } from "./doctor/shared/channel-legacy-config-migrate.js";
-import { visitAgentEntries } from "./doctor/shared/legacy-config-record-shared.js";
 
 export type HeartbeatConfig = LegacyHeartbeatConfig;
 
@@ -240,23 +240,32 @@ export function validateLegacyHeartbeatConfig(cfg: OpenClawConfig): void {
   }
 }
 
-/** Names invalid legacy heartbeat values by config path, for Doctor to report while it keeps them. */
-export function describeInvalidLegacyHeartbeatConfig(cfg: OpenClawConfig): string[] {
-  const lines: string[] = [];
-  const describe = (schema: z.ZodType, heartbeat: unknown, path: string) => {
+type InvalidLegacyHeartbeatValue = { pathSegments: (string | number)[]; message: string };
+
+/** Lists invalid legacy heartbeat values by config path, for Doctor to report while it keeps them. */
+export function describeInvalidLegacyHeartbeatConfig(
+  cfg: OpenClawConfig,
+): InvalidLegacyHeartbeatValue[] {
+  const invalid: InvalidLegacyHeartbeatValue[] = [];
+  const describe = (schema: z.ZodType, heartbeat: unknown, owner: (string | number)[]) => {
     const result = schema.safeParse(heartbeat);
     for (const issue of result.success ? [] : result.error.issues) {
-      lines.push(`${[path, ...issue.path.map(String)].join(".")}: ${issue.message}`);
+      const issuePath = issue.path.map((key) => (typeof key === "number" ? key : String(key)));
+      invalid.push({ pathSegments: [...owner, "heartbeat", ...issuePath], message: issue.message });
     }
   };
   const defaults = cfg.agents?.defaults?.heartbeat;
   if (defaults !== undefined) {
-    describe(LegacyHeartbeatDefaultsSchema, defaults, "agents.defaults.heartbeat");
+    describe(LegacyHeartbeatDefaultsSchema, defaults, ["agents", "defaults"]);
   }
-  visitAgentEntries(cfg, (entry, path) =>
-    describe(LegacyHeartbeatSchema, entry.heartbeat, `${path}.heartbeat`),
-  );
-  return lines;
+  for (const { entry, source } of listAgentEntriesWithSource(cfg)) {
+    const owner =
+      source.kind === "entries"
+        ? ["agents", "entries", source.key]
+        : ["agents", "list", source.index];
+    describe(LegacyHeartbeatSchema, entry.heartbeat, owner);
+  }
+  return invalid;
 }
 
 /** Validation-only candidate; durable retirement must finish before this config is written. */
