@@ -247,7 +247,7 @@ export async function runPluginCommandScheduledTurn(params: {
     };
     assertSource();
     if (scheduledToolPolicy?.mode === "account") {
-      // As for capped runs: a removed creator account refuses before any input is accepted.
+      // As for capped runs: a creator account its channel no longer lists refuses before input.
       resolveGroupToolPolicy({
         config: cfg,
         sessionKey: scheduledToolPolicy.ownerSessionKey,
