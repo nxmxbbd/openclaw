@@ -153,13 +153,12 @@ function readHeartbeatReceipt(storePath: string, agentId: string, env: NodeJS.Pr
   );
 }
 
-/** Completed cutover never imports, claims, or removes the file, so its source checks cannot block. */
-function hasCompletedCutover(storePath: string, agentId: string, env: NodeJS.ProcessEnv) {
+/** An unresolved partition or unreadable state proves no receipt phase. */
+function tryReadHeartbeatReceiptPhase(storePath: string, agentId: string, env: NodeJS.ProcessEnv) {
   try {
-    return readHeartbeatReceipt(storePath, agentId, env)?.phase === "complete";
+    return readHeartbeatReceipt(storePath, agentId, env)?.phase;
   } catch {
-    // An unresolved partition or unreadable state cannot prove completion.
-    return false;
+    return undefined;
   }
 }
 
@@ -435,7 +434,11 @@ export async function collectHeartbeatScratchMigrationFindings(
   } as const;
   const findings: HealthFinding[] = [];
   const storePath = resolveCronJobsStorePathFromConfig(cfg, env);
-  for (const agentId of resolveHeartbeatFileAgentIds(cfg)) {
+  // Receipt-only owners still owe their import, and repair inspects them too.
+  const pendingOwners = listAgentIds(cfg).filter(
+    (agentId) => tryReadHeartbeatReceiptPhase(storePath, agentId, env) === "pending",
+  );
+  for (const agentId of new Set([...resolveHeartbeatFileAgentIds(cfg), ...pendingOwners])) {
     const heartbeatPath = path.join(
       resolveAgentWorkspaceDir(cfg, agentId, env),
       LEGACY_HEARTBEAT_FILENAME,
@@ -474,7 +477,8 @@ export async function collectHeartbeatScratchMigrationFindings(
       }
     } catch (error) {
       const deferred = error instanceof CronStoreSelectionRequiredError;
-      if (deferred || !hasCompletedCutover(storePath, agentId, env)) {
+      // A completed cutover only retains the file, so its source checks cannot block.
+      if (deferred || tryReadHeartbeatReceiptPhase(storePath, agentId, env) !== "complete") {
         findings.push({
           ...MIGRATION_FINDING_DEFAULTS,
           target: agentId,
