@@ -122,6 +122,7 @@ it("clears old credentials before anonymous discovery and persists no-auth", asy
         "x-bf-vk": "synthetic-old-vk",
       },
       request: {
+        allowPrivateNetwork: true,
         auth: { mode: "header", headerName: "x-bf-vk", value: "synthetic-old-request-vk" },
       },
     }),
@@ -132,7 +133,8 @@ it("clears old credentials before anonymous discovery and persists no-auth", asy
   expect(result.profiles).toEqual([]);
   expect(config.models?.providers?.bifrost).toMatchObject({ auth: "none" });
   expect(config.models?.providers?.bifrost?.apiKey).toBeUndefined();
-  expect(config.models?.providers?.bifrost?.request?.auth).toBeUndefined();
+  // Same endpoint: setup replaces authentication but keeps the other request settings.
+  expect(config.models?.providers?.bifrost?.request).toEqual({ allowPrivateNetwork: true });
 });
 
 it("replaces stale no-auth with the supplied credential before discovery", async () => {
@@ -179,10 +181,16 @@ it("rejects revoked setup authority before sending a request", async () => {
   expect(requests).toEqual([]);
 });
 
-it("replaces an invalid stored gateway URL in both setup modes", async () => {
+it.each([
+  { storedUrl: "localhost:8080/openai/v1", emptyUrlError: "Enter an HTTP or HTTPS gateway URL" },
+  { storedUrl: "http://127.0.0.1:9/v1", emptyUrlError: undefined },
+])("replaces stored gateway URL $storedUrl without its request settings", async (stored) => {
   const config = providerConfig({
-    baseUrl: "localhost:8080/openai/v1",
-    request: { auth: { mode: "header", headerName: "x-bf-vk", value: "synthetic-old-vk" } },
+    baseUrl: stored.storedUrl,
+    request: {
+      allowPrivateNetwork: true,
+      auth: { mode: "header", headerName: "x-bf-vk", value: "synthetic-old-vk" },
+    },
   });
   const interactive = await configure({ config });
   const nonInteractive = await runNonInteractive({
@@ -190,11 +198,10 @@ it("replaces an invalid stored gateway URL in both setup modes", async () => {
     opts: { customBaseUrl: baseUrl, customModelId: MODEL_ID, customNoAuth: true },
   });
   // An empty answer keeps the stored URL, so it is only accepted while that URL is valid.
-  expect(interactive.emptyUrlError).toBe("Enter an HTTP or HTTPS gateway URL");
-  expect((await configure({ config: providerConfig({}) })).emptyUrlError).toBeUndefined();
+  expect(interactive.emptyUrlError).toBe(stored.emptyUrlError);
   for (const saved of [interactive.config, nonInteractive]) {
     expect(saved?.models?.providers?.bifrost).toMatchObject({ baseUrl, auth: "none" });
-    expect(saved?.models?.providers?.bifrost?.request?.auth).toBeUndefined();
+    expect(saved?.models?.providers?.bifrost?.request).toBeUndefined();
   }
 });
 

@@ -31,9 +31,11 @@ export function buildBifrostConnectionConfig(
           // Setup replaces authentication. Old header credentials must not override
           // the new key or follow anonymous discovery to another endpoint.
           headers: undefined,
-          request: sameEndpoint
-            ? { ...existing.request, auth: undefined, headers: undefined }
-            : undefined,
+          // Interactive setup rebuilds this patch on the new URL; a dropped request stays dropped.
+          request:
+            sameEndpoint && existing.request
+              ? { ...existing.request, auth: undefined, headers: undefined }
+              : undefined,
         },
       },
     },
