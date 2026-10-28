@@ -252,6 +252,56 @@ describe("doctor lint state isolation", () => {
     },
   );
 
+  it.each(["rehearsal-worker", "ordinary-default"] as const)(
+    "inspects HEARTBEAT.md for the agents the legacy heartbeat config enrolls (%s)",
+    async (mode) => {
+      await withOpenClawTestState({ prefix: "doctor-lint-heartbeat-file-" }, async (state) => {
+        // Two agents and no system agent: the retired projection alone names no heartbeat owner.
+        await state.writeConfig({
+          agents: {
+            ownership: "explicit",
+            entries: { main: {}, ops: { heartbeat: { every: "15m" } } },
+          },
+          plugins: { enabled: false },
+          memory: { search: { enabled: false } },
+        });
+        const outsidePath = state.path("outside", "notes.md");
+        fs.mkdirSync(path.dirname(outsidePath), { recursive: true });
+        fs.writeFileSync(outsidePath, "outside the workspace\n");
+        const heartbeatPath = state.statePath("workspace-ops", "HEARTBEAT.md");
+        fs.mkdirSync(path.dirname(heartbeatPath), { recursive: true });
+        fs.symlinkSync(outsidePath, heartbeatPath);
+        const scratch = await realHealthCheck("core/doctor/heartbeat-scratch-migration");
+        mocks.resolveDoctorContributionHealthChecks.mockResolvedValue([scratch]);
+        using stdout = captureStdout();
+        await withEnvAsync(
+          { OPENCLAW_CONFIG_PATH: mode === "rehearsal-worker" ? state.configPath : undefined },
+          async () => {
+            const exitCode =
+              mode === "rehearsal-worker"
+                ? await runDoctorLintCliInProcess(
+                    runtime,
+                    { json: true },
+                    { commandStartedAtMs: Date.now() },
+                  )
+                : await runDoctorLintCli(runtime, { json: true });
+            expect(JSON.parse(String(stdout.mock.calls.at(-1)?.[0])).findings).toEqual([
+              expect.objectContaining({
+                checkId: scratch.id,
+                severity: "error",
+                target: "ops",
+                requirement: "heartbeat-file-migration-blocked",
+                path: heartbeatPath,
+                message: expect.stringContaining("escapes the agent workspace"),
+              }),
+            ]);
+            expect(exitCode).toBe(1);
+          },
+        );
+      });
+    },
+  );
+
   it.each(["retired heartbeat", "syntax"])(
     "rejects malformed %s before health checks",
     async (kind) => {
