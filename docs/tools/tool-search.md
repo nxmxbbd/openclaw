@@ -123,7 +123,8 @@ additional discovery turns can offset initial payload savings. Set
 ## Select which tools to defer
 
 Use `include` and `exclude` to defer only part of the authorized tool inventory.
-For example, defer MCP tools but keep frequently used GitHub reads direct:
+For example, defer MCP tools but keep frequently used reads from an MCP server
+configured as `github` direct:
 
 ```json
 {
@@ -131,7 +132,7 @@ For example, defer MCP tools but keep frequently used GitHub reads direct:
     "toolSearch": {
       "mode": "tools",
       "include": [{ "source": "mcp" }],
-      "exclude": [{ "source": "mcp", "name": "github_read_*" }]
+      "exclude": [{ "source": "mcp", "name": "github__read_*" }]
     }
   }
 }
@@ -141,7 +142,9 @@ Core tools, non-MCP plugin tools, client tools, and matching MCP GitHub read
 tools keep their schemas and remain directly callable. Other eligible MCP tools
 are searchable, describable, and callable through Tool Search. Use the
 **registered tool name**, which can differ from the name advertised by the MCP
-server.
+server. Tools from servers configured under `mcp.servers` register as
+`<server>__<tool>`, so this server's `read_file` tool is `github__read_file`.
+`openclaw mcp probe --json` lists the registered names.
 
 Each selector must contain `source`, `name`, or both. Empty selectors, blank
 names, unsupported sources, and unknown fields are rejected.
