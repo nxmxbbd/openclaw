@@ -86,6 +86,32 @@ async function realHealthCheck(id: string) {
   }
   return check;
 }
+
+async function runDoctorLintInMode(
+  mode: "rehearsal-worker" | "ordinary-default",
+  state: { configPath: string; stateDir: string },
+) {
+  using stdout = captureStdout();
+  return await withEnvAsync(
+    { OPENCLAW_CONFIG_PATH: mode === "rehearsal-worker" ? state.configPath : undefined },
+    async () => {
+      const exitCode =
+        mode === "rehearsal-worker"
+          ? await runDoctorLintCliInProcess(
+              runtime,
+              { json: true },
+              { commandStartedAtMs: Date.now() },
+            )
+          : await runDoctorLintCli(runtime, { json: true });
+      // Source-state inspection must hand the launch selectors back.
+      expect(process.env.OPENCLAW_STATE_DIR).toBe(state.stateDir);
+      expect(process.env.OPENCLAW_CONFIG_PATH).toBe(
+        mode === "rehearsal-worker" ? state.configPath : undefined,
+      );
+      return { exitCode, findings: JSON.parse(String(stdout.mock.calls.at(-1)?.[0])).findings };
+    },
+  );
+}
 const handoffDirs = useAutoCleanupTempDirTracker(afterEach);
 let handoffResolver: MockInstance<typeof temporaryState.resolvePreferredOpenClawTmpDir> | undefined;
 
@@ -252,14 +278,20 @@ describe("doctor lint state isolation", () => {
     },
   );
 
-  it.each(["rehearsal-worker", "ordinary-default"] as const)(
-    "inspects HEARTBEAT.md for the agents the legacy heartbeat config enrolls (%s)",
-    async (mode) => {
+  it.runIf(process.platform !== "win32").each([
+    ["rehearsal-worker", "none"],
+    ["ordinary-default", "none"],
+    ["rehearsal-worker", "main"],
+    ["ordinary-default", "main"],
+  ] as const)(
+    "inspects HEARTBEAT.md for the agents the legacy heartbeat config enrolls (%s, system agent %s)",
+    async (mode, systemAgent) => {
       await withOpenClawTestState({ prefix: "doctor-lint-heartbeat-file-" }, async (state) => {
-        // Two agents and no system agent: the retired projection alone names no heartbeat owner.
+        // The retired projection names only the system agent as owner, or no agent without one.
         await state.writeConfig({
           agents: {
             ownership: "explicit",
+            ...(systemAgent === "main" ? { defaults: { systemAgent: { agentId: "main" } } } : {}),
             entries: { main: {}, ops: { heartbeat: { every: "15m" } } },
           },
           plugins: { enabled: false },
@@ -268,36 +300,63 @@ describe("doctor lint state isolation", () => {
         const outsidePath = state.path("outside", "notes.md");
         fs.mkdirSync(path.dirname(outsidePath), { recursive: true });
         fs.writeFileSync(outsidePath, "outside the workspace\n");
-        const heartbeatPath = state.statePath("workspace-ops", "HEARTBEAT.md");
-        fs.mkdirSync(path.dirname(heartbeatPath), { recursive: true });
-        fs.symlinkSync(outsidePath, heartbeatPath);
+        const heartbeatPaths = ["main", "ops"].map((agentId) =>
+          state.statePath(`workspace-${agentId}`, "HEARTBEAT.md"),
+        );
+        for (const heartbeatPath of heartbeatPaths) {
+          fs.mkdirSync(path.dirname(heartbeatPath), { recursive: true });
+          fs.symlinkSync(outsidePath, heartbeatPath);
+        }
         const scratch = await realHealthCheck("core/doctor/heartbeat-scratch-migration");
         mocks.resolveDoctorContributionHealthChecks.mockResolvedValue([scratch]);
-        using stdout = captureStdout();
-        await withEnvAsync(
-          { OPENCLAW_CONFIG_PATH: mode === "rehearsal-worker" ? state.configPath : undefined },
-          async () => {
-            const exitCode =
-              mode === "rehearsal-worker"
-                ? await runDoctorLintCliInProcess(
-                    runtime,
-                    { json: true },
-                    { commandStartedAtMs: Date.now() },
-                  )
-                : await runDoctorLintCli(runtime, { json: true });
-            expect(JSON.parse(String(stdout.mock.calls.at(-1)?.[0])).findings).toEqual([
-              expect.objectContaining({
-                checkId: scratch.id,
-                severity: "error",
-                target: "ops",
-                requirement: "heartbeat-file-migration-blocked",
-                path: heartbeatPath,
-                message: expect.stringContaining("escapes the agent workspace"),
-              }),
-            ]);
-            expect(exitCode).toBe(1);
-          },
-        );
+        const { exitCode, findings } = await runDoctorLintInMode(mode, state);
+        expect(findings).toEqual([
+          expect.objectContaining({
+            checkId: scratch.id,
+            severity: "error",
+            target: "ops",
+            requirement: "heartbeat-file-migration-blocked",
+            path: heartbeatPaths[1],
+            message: expect.stringContaining("escapes the agent workspace"),
+          }),
+        ]);
+        expect(exitCode).toBe(1);
+        expect(heartbeatPaths.map((entry) => fs.readlinkSync(entry))).toEqual([
+          outsidePath,
+          outsidePath,
+        ]);
+        expect(fs.readFileSync(outsidePath, "utf8")).toBe("outside the workspace\n");
+      });
+    },
+  );
+
+  it.each(["rehearsal-worker", "ordinary-default"] as const)(
+    "inspects the source workspace HEARTBEAT.md after heartbeat settings are retired (%s)",
+    async (mode) => {
+      await withOpenClawTestState({ prefix: "doctor-lint-heartbeat-retired-" }, async (state) => {
+        await state.writeConfig({
+          agents: { ownership: "explicit", entries: { ops: {} } },
+          plugins: { enabled: false },
+          memory: { search: { enabled: false } },
+        });
+        // A sole agent owns the default workspace.
+        const heartbeatPath = state.statePath("workspace", "HEARTBEAT.md");
+        fs.mkdirSync(path.dirname(heartbeatPath), { recursive: true });
+        fs.writeFileSync(heartbeatPath, "# Checklist\n- check the queue\n");
+        const scratch = await realHealthCheck("core/doctor/heartbeat-scratch-migration");
+        mocks.resolveDoctorContributionHealthChecks.mockResolvedValue([scratch]);
+        const { exitCode, findings } = await runDoctorLintInMode(mode, state);
+        expect(findings).toEqual([
+          expect.objectContaining({
+            checkId: scratch.id,
+            severity: "warning",
+            target: "ops",
+            requirement: "legacy-heartbeat-file",
+            path: heartbeatPath,
+          }),
+        ]);
+        expect(exitCode).toBe(1);
+        expect(fs.readFileSync(heartbeatPath, "utf8")).toBe("# Checklist\n- check the queue\n");
       });
     },
   );
