@@ -4,7 +4,7 @@ import {
   type ModelDefinitionConfig,
   type OpenClawConfig,
 } from "openclaw/plugin-sdk/provider-onboard";
-import { BIFROST_BASE_URL, normalizeBifrostBaseUrl } from "./defaults.js";
+import { BIFROST_BASE_URL, tryNormalizeBifrostBaseUrl } from "./defaults.js";
 
 export function buildBifrostConnectionConfig(
   config: OpenClawConfig,
@@ -12,7 +12,7 @@ export function buildBifrostConnectionConfig(
   anonymous: boolean,
 ): OpenClawConfig {
   const existing = resolveMergedModelProviderConfig(config, "bifrost");
-  const sameEndpoint = existing && normalizeBifrostBaseUrl(existing.baseUrl) === baseUrl;
+  const sameEndpoint = existing && tryNormalizeBifrostBaseUrl(existing.baseUrl) === baseUrl;
   // Keep deletion instructions intact until the host applies the returned auth patch.
   return {
     ...config,
