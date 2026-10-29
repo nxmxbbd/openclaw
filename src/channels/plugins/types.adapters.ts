@@ -79,6 +79,14 @@ export type ChannelAccountLinkState = "linked" | "not-linked" | "unknown";
 
 export type ChannelConfigAdapter<ResolvedAccount> = {
   listAccountIds: (cfg: OpenClawConfig) => string[];
+  /**
+   * Whether the channel still serves a listed named account id from its configuration: its own
+   * account entry, or channel-level settings it intentionally serves the id with. Return false
+   * for ids listed only because another config surface, such as a routing binding, still names
+   * them. Called synchronously with a normalized id; throwing or any non-true result refuses.
+   * Omit when every listed id is served.
+   */
+  hasAccountConfig?: (cfg: OpenClawConfig, accountId: string) => boolean;
   resolveAccount: (cfg: OpenClawConfig, accountId?: string | null) => ResolvedAccount;
   /** Operational account preparation; preferred over the synchronous compatibility hook. */
   resolveAccountAsync?: (
