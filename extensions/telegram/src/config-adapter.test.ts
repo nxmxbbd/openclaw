@@ -13,11 +13,24 @@ const binding = (accountId: string, channel = "telegram") => ({
 const deleteAccount = telegramConfigAdapter.deleteAccount;
 
 describe("telegram account config adapter", () => {
-  it("is the account config both Telegram plugins expose", () => {
-    for (const plugin of [telegramPlugin, telegramSetupPlugin]) {
-      expect(plugin.config.hasAccountConfig).toBe(hasTelegramAccountConfig);
-      expect(plugin.config.deleteAccount).toBe(deleteAccount);
-    }
+  it.each([
+    ["runtime", telegramPlugin],
+    ["setup", telegramSetupPlugin],
+  ])("serves and deletes accounts through the %s plugin", (_name, plugin) => {
+    const cfg = {
+      channels: {
+        telegram: { botToken: "tok-base", accounts: { team: { botToken: "tok-team" } } },
+      },
+      bindings: [binding("team"), binding("gone")],
+    } as OpenClawConfig;
+    expect([
+      plugin.config.hasAccountConfig?.(cfg, "team"),
+      plugin.config.hasAccountConfig?.(cfg, "gone"),
+    ]).toEqual([true, false]);
+    const next = plugin.config.deleteAccount?.({ cfg, accountId: "team" });
+    expect(next?.channels?.telegram).toEqual({ botToken: "tok-base" });
+    expect(next?.bindings).toBeUndefined();
+    expect(plugin.config.listAccountIds(next!)).toEqual(["default"]);
   });
 
   it("reports an id that only a binding still names as unserved", () => {
