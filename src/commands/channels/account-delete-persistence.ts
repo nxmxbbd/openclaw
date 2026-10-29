@@ -39,7 +39,7 @@ async function persistChannelAccountDeleteFollowUp(
 
 /**
  * Persists a follow-up and applies it to the caller's in-memory configs. A failed follow-up leaves
- * the committed delete in place and reports what is left to edit instead of failing the command.
+ * the committed delete in place and reports what to check instead of failing the command.
  */
 export async function persistAccountDeleteFollowUp(
   followUp: ChannelAccountDeleteFollowUp,
@@ -52,7 +52,7 @@ export async function persistAccountDeleteFollowUp(
   } catch (error) {
     const paths = followUp.paths.join(", ");
     runtime.error(
-      `Could not update ${paths} after deleting the account: ${formatErrorMessage(error)}. Edit ${paths} by hand to finish the cleanup.`,
+      `Could not update ${paths} after deleting the account. Check ${paths} and finish the cleanup by hand if it is still needed. Reason: ${formatErrorMessage(error)}`,
     );
     return false;
   }

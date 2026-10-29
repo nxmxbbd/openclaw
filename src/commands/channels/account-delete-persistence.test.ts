@@ -220,7 +220,7 @@ describe("account delete persistence", () => {
         persistAccountDeleteFollowUp(followUp, configPath, { error }, [config]),
       ).resolves.toBe(false);
       expect(error).toHaveBeenCalledExactlyOnceWith(
-        "Could not update bindings after deleting the account: channels.telegram.accounts changed after the delete was prepared. Edit bindings by hand to finish the cleanup.",
+        "Could not update bindings after deleting the account. Check bindings and finish the cleanup by hand if it is still needed. Reason: channels.telegram.accounts changed after the delete was prepared",
       );
       expect(config.bindings).toEqual([binding("team")]);
     });
