@@ -100,6 +100,12 @@ export type ChannelConfigAdapter<ResolvedAccount> = {
     accountId: string;
     enabled: boolean;
   }) => OpenClawConfig;
+  /**
+   * Returns the config without the account. `channels remove --delete` and `openclaw configure`
+   * save the changes under `channels` first. Any other change (such as bindings for the account)
+   * follows in a second write. That write is skipped when the delete or those values changed
+   * meanwhile; when it is skipped or fails, the account stays deleted and the user is warned.
+   */
   deleteAccount?: (params: { cfg: OpenClawConfig; accountId: string }) => OpenClawConfig;
   isEnabled?: (account: ResolvedAccount, cfg: OpenClawConfig) => boolean;
   disabledReason?: (account: ResolvedAccount, cfg: OpenClawConfig) => string;
