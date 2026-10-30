@@ -182,3 +182,67 @@ it.each([
   );
   expect(seen).toEqual(row.expected);
 });
+
+it.each([false, true])(
+  "awaits final file authority without invoking its raw guard (revoke=%s)",
+  async (revoke) => {
+    await withTestDir({ prefix: "openclaw-prepared-write-" }, async (dir) => {
+      const file = path.join(dir, "original.txt");
+      await fs.writeFile(file, "original");
+      const entered = Promise.withResolvers<void>();
+      const resume = Promise.withResolvers<void>();
+      const release = vi.fn();
+      let active = true;
+      let preparations = 0;
+      const raw = vi.fn(() => {
+        throw new Error("unexpected synchronous source probe");
+      });
+      const receiptAuthority = Object.assign(raw, {
+        prepareSessionSourceEffect: async () => {
+          if (++preparations === 2) {
+            entered.resolve();
+            await resume.promise;
+          }
+          return {
+            assertCurrent() {
+              if (!active) {
+                throw new Error("source retired");
+              }
+            },
+            release,
+          };
+        },
+      });
+      const pending = withGatewayToolCallerIdentity(
+        {
+          agentId: "main",
+          sessionKey: "agent:main:prepared-file",
+          receiptAuthority,
+        },
+        () => writeHostFile(file, "replacement"),
+      ).catch((error: unknown) => error);
+      try {
+        await Promise.race([
+          entered.promise,
+          pending.then(() => {
+            throw new Error("write settled before final authority preparation");
+          }),
+        ]);
+        expect(await fs.readFile(file, "utf8")).toBe("original");
+        active = !revoke;
+      } finally {
+        resume.resolve();
+      }
+      const outcome = await pending;
+      if (revoke) {
+        expect(outcome).toMatchObject({ message: "source retired" });
+      } else {
+        expect(outcome).toBeUndefined();
+      }
+      expect(await fs.readFile(file, "utf8")).toBe(revoke ? "original" : "replacement");
+      expect(raw).not.toHaveBeenCalled();
+      expect(preparations).toBe(2);
+      expect(release).toHaveBeenCalledTimes(2);
+    });
+  },
+);
