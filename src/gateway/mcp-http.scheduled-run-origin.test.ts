@@ -6,13 +6,18 @@ import { getGatewayToolCallerIdentity } from "../agents/tools/gateway-caller-con
 import type { resolveGatewayScopedTools } from "./tool-resolution.js";
 
 const resolveTools = vi.hoisted(() => vi.fn<typeof resolveGatewayScopedTools>());
-vi.mock("../config/io.js", () => {
+vi.mock("../config/io.js", async (importOriginal) => {
   const config = {};
-  return { getRuntimeConfig: () => config };
+  return {
+    ...(await importOriginal<typeof import("../config/io.js")>()),
+    getRuntimeConfig: () => config,
+  };
 });
-vi.mock("../agents/agent-tools.before-tool-call.js", () => ({
+vi.mock("../agents/agent-tools.before-tool-call.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../agents/agent-tools.before-tool-call.js")>()),
   runBeforeToolCallHook: async ({ params }: { params: unknown }) => ({ blocked: false, params }),
 }));
+// mock-isolation: the real resolver loads the whole Gateway tool surface; rows check origins only.
 vi.mock("./tool-resolution.js", () => ({ resolveGatewayScopedTools: resolveTools }));
 
 import { mintMcpLoopbackClientGrant } from "./mcp-grant-store.js";
