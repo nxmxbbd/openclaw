@@ -30,7 +30,6 @@ import { createUnrecordedScheduledAccountRefusal } from "../../agents/scheduled-
 import { withLocalSessionPlacementTurnSettlement } from "../../agents/session-placement-admission.js";
 import { resolveAgentLifecycleTerminalMetadata } from "../../auto-reply/reply/agent-lifecycle-terminal.js";
 import type { VerboseLevel } from "../../auto-reply/thinking.js";
-import type { CliSessionBinding } from "../../config/sessions.js";
 import { buildGenericCliContextEngineHostSupport } from "../../context-engine/host-compat.js";
 import { registerCronRunExecSource } from "../../infra/cron-run-exec-source.js";
 import {
@@ -56,6 +55,7 @@ import {
   createCronCandidateExecutionResolver,
   createCronRuntimeOverrideResolver,
 } from "./run-candidate-runtime.js";
+import { hasCliSessionReuseMetadata, resolveCliChildAbortSignal } from "./run-cli-session.js";
 import { finalizeCronPromptForResolvedTools } from "./run-delivery-trace.js";
 import {
   getCliSessionBinding,
@@ -78,22 +78,6 @@ type CronEmbeddedRuntime = typeof import("./run-embedded.runtime.js");
 const cronEmbeddedRuntimeLoader = createLazyImportLoader<CronEmbeddedRuntime>(
   () => import("./run-embedded.runtime.js"),
 );
-
-// A CLI child in its parent's workspace runs native tools no tool check sees, so
-// its process also ends when the parent resets.
-function resolveCliChildAbortSignal(
-  runSignal: AbortSignal | undefined,
-  parentSignal: AbortSignal | undefined,
-): AbortSignal | undefined {
-  if (!parentSignal) {
-    return runSignal;
-  }
-  return runSignal ? AbortSignal.any([runSignal, parentSignal]) : parentSignal;
-}
-
-function hasCliSessionReuseMetadata(binding: CliSessionBinding): boolean {
-  return Object.entries(binding).some(([key, value]) => key !== "sessionId" && value !== undefined);
-}
 
 /** Creates the model-fallback executor for one isolated cron prompt run. */
 export function createCronPromptExecutor(
@@ -213,6 +197,7 @@ export function createCronPromptExecutor(
       agentId: params.agentId,
       runId,
       runSessionKey: params.runSessionKey,
+      freshRunSessionKey: params.usesDetachedRunSession ? params.runSessionKey : undefined,
       toolsAllow: params.agentPayload?.toolsAllow,
       operatorAuthority: params.operatorAuthority,
     });
