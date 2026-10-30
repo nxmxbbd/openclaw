@@ -32,6 +32,7 @@ import { resolveAgentLifecycleTerminalMetadata } from "../../auto-reply/reply/ag
 import type { VerboseLevel } from "../../auto-reply/thinking.js";
 import { buildGenericCliContextEngineHostSupport } from "../../context-engine/host-compat.js";
 import { registerCronRunExecSource } from "../../infra/cron-run-exec-source.js";
+import { captureReplyMessageJoinObservation } from "../../sessions/session-controller.message-join-observation.js";
 import {
   createUserTurnTranscriptRecorder,
   type UserTurnTranscriptRecorder,
@@ -48,6 +49,7 @@ import { resolveIsolatedCronPromptCacheKey } from "./prompt-cache-key.js";
 import {
   assertCronCandidateSandboxPlacement,
   assertCronRuntimeAuthorityCandidate,
+  resolveCliChildAbortSignal,
   resolveCronSandboxPlacement,
   type CronSandboxPlacement,
 } from "./run-admission.js";
@@ -55,7 +57,7 @@ import {
   createCronCandidateExecutionResolver,
   createCronRuntimeOverrideResolver,
 } from "./run-candidate-runtime.js";
-import { hasCliSessionReuseMetadata, resolveCliChildAbortSignal } from "./run-cli-session.js";
+import { hasCliSessionReuseMetadata } from "./run-cli-session.js";
 import { finalizeCronPromptForResolvedTools } from "./run-delivery-trace.js";
 import {
   getCliSessionBinding,
@@ -441,6 +443,7 @@ export function createCronPromptExecutor(
             messageActionTurnCapability: cronAdmission.messageActionTurnCapability,
             config: params.cfgWithAgentDefaults,
             prompt: promptText,
+            inputProvenance: params.inputProvenance,
             finalizePromptForResolvedTools,
             model: modelOverride,
             thinkLevel: candidateThinkLevel,
@@ -550,8 +553,6 @@ export function createCronPromptExecutor(
                     : undefined;
                 const candidateResult = await runCliAgent({
                   ...buildCommonRunParams(),
-                  // The CLI backend marks internal provenance as non-user input.
-                  inputProvenance: params.inputProvenance,
                   diagnosticOwner,
                   sessionEntry: params.cronSession.sessionEntry,
                   contextWindow: params.cronSession.sessionEntry.contextWindow,
@@ -636,7 +637,7 @@ export function createCronPromptExecutor(
         });
         // Embedded runs receive both the explicit route and the current-channel
         // id so message-tool policy can target the same chat as fallback delivery.
-        const result = await runEmbeddedAgent({
+        const embeddedRunParams: Parameters<CronEmbeddedRuntime["runEmbeddedAgent"]>[0] = {
           ...buildCommonRunParams(),
           promptCacheKey,
           cleanupBundleMcpOnRunEnd: params.usesDetachedRunSession,
@@ -686,7 +687,12 @@ export function createCronPromptExecutor(
           assistantErrorTranscript: runOptions.assistantErrorTranscript,
           abortSignal: params.abortSignal,
           onLaneWait: params.onLaneWait,
+        };
+        embeddedRunParams.joinObservation = captureReplyMessageJoinObservation({
+          run: { ...embeddedRunParams, sessionFile: params.runSessionKey },
+          sessionEntry: params.cronSession.sessionEntry,
         });
+        const result = await runEmbeddedAgent(embeddedRunParams);
         bootstrapPromptWarningSignaturesSeen = resolveBootstrapWarningSignaturesSeen(
           result.meta?.systemPromptReport,
         );
