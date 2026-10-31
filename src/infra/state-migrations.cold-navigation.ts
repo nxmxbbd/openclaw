@@ -12,6 +12,7 @@ import { withEngineStoreAdmission } from "./database-engine/admission-scope.js";
 import { formatErrorMessage } from "./errors.js";
 import {
   clearNodeSqliteKyselyCacheForDatabase,
+  enableNodeSqliteKyselyStatementCache,
   executeSqliteQueryTakeFirstSync,
   getNodeSqliteKysely,
 } from "./kysely-sync.js";
@@ -48,6 +49,10 @@ export async function migrateSessionColdNavigation(
   const warnings: string[] = [];
   let remainingWorkMs = COLD_NAVIGATION_WORK_BUDGET_MS;
   signal?.throwIfAborted();
+  // Empty admitted discovery has no work; acquiring a lease would dirty shared state.
+  if (params.preparedTargets?.length === 0) {
+    return { changes, warnings };
+  }
   try {
     await withAgentDatabaseMaintenanceLease({ env, processBound: true }, async (maintenance) => {
       const assertCurrent = () => {
@@ -74,6 +79,7 @@ export async function migrateSessionColdNavigation(
             );
           }
           using anchor = openNodeSqliteDatabase(target.path);
+          enableNodeSqliteKyselyStatementCache(anchor);
           const native = withEngineStoreAdmission(() => {
             if (agentEngineInput()) {
               return openAgentEngineStore(anchor, target.agentId, target.path, true);
