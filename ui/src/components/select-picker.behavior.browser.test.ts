@@ -6,6 +6,9 @@ import { waitForSolid } from "../test-helpers/solid-settle.ts";
 import { Picker, type PickerParams, type PickerOption } from "./select-picker.ts";
 import overlayStyles from "./solid/overlay.css?inline";
 
+// Geometry assertions measure the settled list, not the Select entry scale.
+document.documentElement.style.setProperty("--select-enter-duration", "0s");
+
 const options: PickerOption[] = [
   { value: "fixture/anchor", label: "Anchor", description: "Fixture provider" },
   { value: "fixture/aurora-large", label: "Aurora Large" },
@@ -448,6 +451,37 @@ describe("Picker", () => {
     expect(p.picker.querySelector<HTMLInputElement>("input")!.value).toBe("");
     expect(p.rows()).toHaveLength(9);
   });
+
+  it.each([
+    ["NFC", "MÜNCHEN", "Mu\u0308nchen"],
+    ["NFD", "MU\u0308NCHEN", "München"],
+  ])(
+    "matches canonical %s searches across option fields without rewriting values",
+    async (_, query, text) => {
+      const reference = `fixture/${text}`;
+      const p = await mount({
+        value: "label",
+        searchable: "always",
+        options: [
+          { value: "label", label: text },
+          { value: reference, label: "Reference" },
+          { value: "description", label: "Description", description: text },
+          { value: "group", label: "Grouped" },
+        ],
+        groupBy: (option) => (option.value === "group" ? { id: "group", label: text } : undefined),
+      });
+      await p.open();
+      expect((await p.search(query)).value).toBe(query);
+      expect(p.rows().map((row) => row.dataset.value)).toEqual([
+        "label",
+        reference,
+        "description",
+        "group",
+      ]);
+      p.rows()[1]!.click();
+      expect(p.params.onChange).toHaveBeenCalledExactlyOnceWith(reference);
+    },
+  );
 
   it("commits an enabled visible choice once and skips disabled keyboard rows", async () => {
     const p = await mount();
