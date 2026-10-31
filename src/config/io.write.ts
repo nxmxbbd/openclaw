@@ -9,7 +9,7 @@ import {
 } from "../infra/deferred-plugin-migrations.js";
 import { isVitestRuntimeEnv } from "../infra/env.js";
 import { formatErrorMessage } from "../infra/errors.js";
-import { readExistingStateRootMode } from "../infra/private-dir-mode.js";
+import { stateRootDirectoryMode } from "../infra/private-dir-mode.js";
 import {
   getUpdateDoctorConfigWriteAuthority,
   assertUpdateDoctorConfigInputHash,
@@ -267,6 +267,7 @@ export async function writeConfigFileFromContext(
       ...context.pathResolution,
       pluginValidation: options.skipPluginValidation ? "skip" : "full",
       semanticValidation: "strict",
+      mcpTransportBaseline: snapshot.sourceConfig,
       preservedLegacyRootKeys: options.preservedLegacyRootKeys,
       deferredPluginMigrations: pendingMigrations,
     });
@@ -511,11 +512,7 @@ export async function writeConfigFileFromContext(
       });
     await using preparedFile = await prepareConfigFileWrite({
       configPath: publicationPath,
-      dirMode: readExistingStateRootMode(
-        path.dirname(publicationPath),
-        stateDirectory.path,
-        deps.fs,
-      ),
+      dirMode: stateRootDirectoryMode(path.dirname(publicationPath), stateDirectory.path),
       content: json,
       previousRaw: snapshot.raw,
       warn: (message) => (options.skipOutputLogs ? undefined : deps.logger.warn(message)),
