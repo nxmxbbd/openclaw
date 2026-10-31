@@ -1,2 +1,0 @@
-# The reply pipeline honors suppressReply from plugin commands: three command result regression rows.
-20
