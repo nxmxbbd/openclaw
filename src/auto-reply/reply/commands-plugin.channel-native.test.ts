@@ -33,6 +33,11 @@ import {
 import { addTestHook } from "../../plugins/hooks.test-fixtures.js";
 import { loadOpenClawPlugins } from "../../plugins/loader.js";
 import { waitForPluginCacheRetirement } from "../../plugins/plugin-cache.js";
+import {
+  createPluginCommandRuntime,
+  matchPluginCommandInvocation,
+  PLUGIN_COMMAND_DISPATCH,
+} from "../../plugins/plugin-command-runtime.js";
 import type { PluginRegistry } from "../../plugins/registry-types.js";
 import {
   disposePluginRegistryInstances,
@@ -78,6 +83,8 @@ type Sender = {
   verified?: boolean;
   commandAuthorized?: boolean;
   foreignOperatorAuthority?: true;
+  /** Native command turn, with the plugin dispatch planned by the channel (as Slack sends it) or not. */
+  native?: "planned" | "matched";
 };
 
 type AuthorityChange = "demotion" | "role removal" | "identity unlink";
@@ -158,6 +165,8 @@ async function withChannelCommandPlugin(
           requireAuth: true,
           runtimeCapabilities: ["subagents", "scheduledTurns"],
         },
+        // Shares its name with a built-in command, which it must keep shadowing.
+        { name: "login", requireAuth: true },
       ];
       await fs.writeFile(
         pluginFile,
@@ -233,6 +242,7 @@ async function withChannelCommandPlugin(
               messageId: randomUUID(),
               message: { rawBody: body },
               access: { commands: { authorized: sender.commandAuthorized ?? true } },
+              ...(sender.native ? { command: { kind: "native" as const } } : {}),
             },
           );
           expect(ctx.SessionKey).toBe(sessionKey);
@@ -260,7 +270,19 @@ async function withChannelCommandPlugin(
                     ctx,
                     cfg,
                     dispatcher,
-                    ...(operatorAuthority ? { replyOptions: { operatorAuthority } } : {}),
+                    replyOptions: {
+                      ...(operatorAuthority ? { operatorAuthority } : {}),
+                      ...(sender.native === "planned"
+                        ? {
+                            [PLUGIN_COMMAND_DISPATCH]: expectDefined(
+                              matchPluginCommandInvocation(createPluginCommandRuntime(), body, {
+                                channel: channelId,
+                              }),
+                              "planned plugin dispatch",
+                            ).dispatch,
+                          }
+                        : {}),
+                    },
                   }),
               }),
             { inheritRequestScope: false },
@@ -447,6 +469,29 @@ describe("plugin command native capabilities through channel ingress", () => {
       expect(await userInputKeys()).toEqual(["channel-user:v1:"]);
     });
   });
+
+  it.each([
+    ["planned", "/review-panel"],
+    ["matched", "/review-panel"],
+    ["matched", "/login"],
+  ] as const)(
+    "runs a continuing command once on a native turn with a %s dispatch: %s",
+    async (native, body) => {
+      await withChannelCommandPlugin(
+        async ({ handler, send }) => {
+          handler.mockImplementation(async () => ({ continueAgent: true }));
+          vi.mocked(runEmbeddedAgent).mockResolvedValueOnce({
+            payloads: [{ text: "Continued." }],
+            meta: { durationMs: 1 },
+          });
+          expect(await send(body, { native })).toEqual(["Continued."]);
+          expect(handler).toHaveBeenCalledOnce();
+          expect(runEmbeddedAgent).toHaveBeenCalledOnce();
+        },
+        { channelId: "slack" },
+      );
+    },
+  );
 
   it("rechecks the channel operator on every native call and fences the revoked turn", async () => {
     await withChannelCommandPlugin(async ({ handler, send, demoteAdmin }) => {

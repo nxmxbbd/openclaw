@@ -1,0 +1,2 @@
+# A continuing plugin command runs once on native command turns and keeps shadowing a same-named built-in: planned and matched dispatch regression rows.
+45
