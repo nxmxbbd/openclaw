@@ -475,6 +475,26 @@ describe("plugin command native capabilities through channel ingress", () => {
     });
   });
 
+  it.each([
+    [{ suppressReply: true }, []],
+    [{ text: "Sent by the plugin.", suppressReply: true }, []],
+    [{ suppressReply: true, continueAgent: true }, ["Continued."]],
+  ] as const)(
+    "honors a command result of %j that delivered its own reply",
+    async (result, sent) => {
+      await withChannelCommandPlugin(async ({ handler, send }) => {
+        handler.mockImplementationOnce(async () => result);
+        vi.mocked(runEmbeddedAgent).mockResolvedValueOnce({
+          payloads: [{ text: "Continued." }],
+          meta: { durationMs: 1 },
+        });
+        expect(await send("/review-panel")).toEqual(sent);
+        expect(handler).toHaveBeenCalledOnce();
+        expect(runEmbeddedAgent).toHaveBeenCalledTimes(sent.length);
+      });
+    },
+  );
+
   it("withholds the capability from authorized senders without operator authority", async () => {
     await withChannelCommandPlugin(
       async ({ handler, send, demoteAdmin, userInputKeys }) => {
